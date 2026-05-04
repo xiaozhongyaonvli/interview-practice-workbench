@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createArticleStore } from "./src/storage/articleStore.js";
+import { createQuestionStore } from "./src/storage/questionStore.js";
+import { createLlmDebugStore } from "./src/storage/llmDebugStore.js";
 import { createArticleApi } from "./src/api/articles.js";
+import { createQuestionApi } from "./src/api/questions.js";
 import { sendJson } from "./src/api/http.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
@@ -42,7 +45,10 @@ function resolveStaticPath(pathname) {
  */
 export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
   const articleStore = createArticleStore({ baseDir });
+  const questionStore = createQuestionStore({ baseDir });
+  const llmDebugStore = createLlmDebugStore({ baseDir });
   const articleApi = createArticleApi({ articleStore });
+  const questionApi = createQuestionApi({ questionStore, llmDebugStore });
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -63,6 +69,24 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
 
     if (url.pathname === "/api/articles" && req.method === "GET") {
       await articleApi.handleList(req, res, url);
+      return;
+    }
+
+    // --- Question routes --------------------------------------------------
+
+    if (url.pathname === "/api/questions/import" && req.method === "POST") {
+      await questionApi.handleImport(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/questions" && req.method === "GET") {
+      await questionApi.handleList(req, res, url);
+      return;
+    }
+
+    const questionUpdateMatch = url.pathname.match(/^\/api\/questions\/([A-Za-z0-9_-]+)$/);
+    if (questionUpdateMatch && req.method === "PATCH") {
+      await questionApi.handleUpdate(req, res, questionUpdateMatch[1]);
       return;
     }
 

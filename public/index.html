@@ -54,6 +54,7 @@
               <div class="source-tabs" role="tablist">
                 <button class="active" type="button" data-source-tab="manual">手动粘贴</button>
                 <button type="button" data-source-tab="nowcoder">牛客</button>
+                <button type="button" data-source-tab="extract">导入抽题</button>
               </div>
 
               <form data-source-panel="manual" class="source-panel" id="manual-import-form" novalidate>
@@ -69,7 +70,12 @@
                 <button class="full" type="button" disabled>抓取面经 (Step 8 启用)</button>
               </div>
 
-              <button class="full" type="button" data-extract-questions disabled>抽取面经问题 (Step 3 启用)</button>
+              <form data-source-panel="extract" class="source-panel" id="extract-import-form" hidden novalidate>
+                <input name="query" value="mysql" placeholder="方向关键词" aria-label="方向关键词" required>
+                <textarea name="rawResponse" placeholder="粘贴 LLM 抽题 JSON,例如 {&quot;questions&quot;:[...]}" aria-label="抽题 JSON" required></textarea>
+                <p class="source-status" data-source-status hidden></p>
+                <button class="primary full" type="submit">导入到问题池</button>
+              </form>
             </div>
 
             <div class="imported-articles" id="imported-articles">
@@ -100,64 +106,11 @@
               </div>
             </div>
 
-            <div class="card-grid">
-              <article class="training-card hot">
-                <div class="card-topline">
-                  <span>MySQL</span>
-                  <em>需要重答</em>
-                </div>
-                <h4>慢 SQL 如何排查？</h4>
-                <p>最近评分 6.8 / 10，工程思想不足，缺少验证和回滚。</p>
-                <div class="score-row">
-                  <span>表达 7</span>
-                  <span>工程 6</span>
-                  <span>2 attempts</span>
-                </div>
-                <div class="card-action-row">
-                  <button class="primary" type="button" data-open-practice>继续重答</button>
-                  <button class="ghost" type="button" data-open-practice>查看反馈</button>
-                </div>
-              </article>
-
-              <article class="training-card">
-                <div class="card-topline">
-                  <span>MySQL</span>
-                  <em>候选</em>
-                </div>
-                <h4>索引失效有哪些情况？</h4>
-                <p>来自牛客面经，尚未开始练习。</p>
-                <div class="score-row">
-                  <span>0 attempts</span>
-                  <span>NowCoder</span>
-                </div>
-                <div class="card-action-row">
-                  <button class="primary" type="button" data-open-practice>开始练习</button>
-                  <button class="ghost" type="button">忽略</button>
-                </div>
-              </article>
-
-              <article class="training-card mastered">
-                <div class="card-topline">
-                  <span>Redis</span>
-                  <em>可保存</em>
-                </div>
-                <h4>Redis 热 key 如何处理？</h4>
-                <p>最近评分 8.2 / 10，表达结构清楚，工程落点完整。</p>
-                <div class="score-row">
-                  <span>表达 8</span>
-                  <span>工程 8</span>
-                  <span>3 attempts</span>
-                </div>
-                <div class="card-action-row">
-                  <button class="primary" type="button">保存卡片</button>
-                  <button class="ghost" type="button" data-open-practice>再练一次</button>
-                </div>
-              </article>
-
-              <article class="training-card add-card">
+            <div class="card-grid" data-question-grid>
+              <article class="training-card add-card" data-add-card>
                 <strong>+</strong>
-                <h4>创建新训练卡片</h4>
-                <p>手动录入题目，或粘贴文章后抽题。</p>
+                <h4>导入抽题以填充问题池</h4>
+                <p>侧栏 "导入抽题" tab 粘贴 LLM JSON,即可生成候选问题。</p>
               </article>
             </div>
           </section>

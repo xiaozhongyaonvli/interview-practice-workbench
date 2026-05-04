@@ -11,14 +11,43 @@
 import { readFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
 
-function defaultFetchStub() {
-  // Returns an empty article list on any request. Suitable for tests that do
-  // not care about the API and just want the DOM to settle quietly.
+function defaultFetchStub(url) {
+  // Returns a usable empty / one-question payload so the app's startup
+  // fetches resolve without error. Tests that need richer behavior pass
+  // their own stub via the `fetch` option.
+  const path = new URL(String(url), "http://127.0.0.1/").pathname;
+  const stubQuestion = {
+    id: "stub-question-1",
+    question: "stub question for default tests",
+    category: "MySQL",
+    tags: ["MySQL"],
+    difficulty: "medium",
+    source: "manual",
+    sourceUrl: null,
+    sourceTitle: null,
+    evidence: null,
+    query: "mysql",
+    confidence: 0.8,
+    status: "candidate",
+    createdAt: "2026-05-04",
+    updatedAt: "2026-05-04"
+  };
+
+  let body = {};
+  if (path === "/api/articles") {
+    body = { articles: [] };
+  } else if (path === "/api/questions") {
+    body = {
+      questions: [stubQuestion],
+      meta: { total: 1, filtered: 1, categories: [], statuses: [] }
+    };
+  }
+
   return Promise.resolve({
     ok: true,
     status: 200,
-    json: () => Promise.resolve({ articles: [] }),
-    text: () => Promise.resolve("")
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body))
   });
 }
 

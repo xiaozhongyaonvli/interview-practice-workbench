@@ -22,7 +22,10 @@ test("app shell exposes the topic-library to practice-detail flow", async () => 
     assert.equal(response.status, 200);
     assert.match(body, /id="home" class="screen active-view"/);
     assert.match(body, /id="practice" class="screen" data-view="practice" hidden/);
-    assert.match(body, /data-open-practice/);
+    // After Step 3, question cards (and their data-open-practice triggers) are
+    // rendered dynamically by app.js, so we no longer expect them in the
+    // server-rendered HTML. We do expect the slot the renderer targets.
+    assert.match(body, /data-question-grid/);
     assert.match(body, /data-back-home/);
   });
 });
