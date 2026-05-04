@@ -449,37 +449,108 @@ async function refreshAttemptHistory(questionId) {
     if (attempts.length === 0) {
       list.innerHTML =
         '<p class="imported-empty">还没有作答记录。保存第一版回答后这里会出现历史。</p>';
-      // Track latest as null so a fresh question starts clean.
       lastAttemptId = null;
       return;
     }
     // Newest first; the API returns oldest-first, so reverse for display.
     const sorted = attempts.slice().reverse();
     lastAttemptId = sorted[0]?.attemptId ?? null;
-    // If the latest attempt already carries a summary, hydrate the feedback
-    // card so reopening practice shows previously saved scores.
     if (sorted[0]?.summary) {
       renderFeedback({ summary: sorted[0].summary });
     } else {
       clearFeedbackCard();
     }
+
+    // Step 6: identify the best-scoring attempt across the list and compute
+    // a per-attempt delta vs its predecessor (newest-first display order).
+    const bestAttempt = selectBestAttemptClient(attempts);
+
     list.innerHTML = sorted
       .map((a, i) => {
         const orderFromOldest = sorted.length - i;
         const time = escapeHtml(
           String(a.createdAt ?? "").slice(0, 16).replace("T", " ")
         );
-        const summary = a.summary?.overallComment ?? (a.status === "scored" ? "已评分" : "未评分");
-        const klass = i === 0 ? "attempt active" : "attempt";
+        const total = totalScoreClient(a.summary);
+        const totalLabel =
+          total === null ? "未评分" : `${total.toFixed(1)} / 10`;
+        const isBest = bestAttempt && a.attemptId === bestAttempt.attemptId;
+        const previous = sorted[i + 1];
+        const prevTotal = previous ? totalScoreClient(previous.summary) : null;
+        const delta =
+          total !== null && prevTotal !== null
+            ? total - prevTotal
+            : null;
+        const deltaLabel =
+          delta === null
+            ? ""
+            : delta > 0
+            ? `<small class="delta delta-up">↑ ${delta.toFixed(1)}</small>`
+            : delta < 0
+            ? `<small class="delta delta-down">↓ ${Math.abs(delta).toFixed(1)}</small>`
+            : '<small class="delta">持平</small>';
+        const summary =
+          a.summary?.overallComment ?? (a.status === "scored" ? "已评分" : "未评分");
+        const klass = [
+          "attempt",
+          i === 0 ? "active" : "",
+          isBest ? "best" : ""
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const bestBadge = isBest
+          ? '<span class="best-badge" data-best-attempt>最佳</span>'
+          : "";
         return `<article class="${klass}" data-attempt-id="${escapeHtml(a.attemptId)}">
-          <span>Attempt ${orderFromOldest} · ${time}</span>
+          <span>Attempt ${orderFromOldest} · ${time} · ${totalLabel} ${deltaLabel}</span>
           <p>${escapeHtml(summary)}</p>
+          ${bestBadge}
         </article>`;
       })
       .join("");
   } catch (error) {
     console.warn("refreshAttemptHistory failed", error);
   }
+}
+
+// --- Step 6 inline helpers: keep the module dependency-free, but mirror
+//     src/domain/attemptComparison.js so tests there own the spec.
+
+function totalScoreClient(summary) {
+  if (!summary || !summary.scores) return null;
+  const keys = [
+    "technicalCorrectness",
+    "coverageCompleteness",
+    "logicalStructure",
+    "expressionClarity",
+    "interviewPerformance"
+  ];
+  let sum = 0;
+  for (const k of keys) {
+    const v = summary.scores[k];
+    if (typeof v !== "number" || Number.isNaN(v)) return null;
+    sum += v;
+  }
+  return sum / keys.length;
+}
+
+function selectBestAttemptClient(attempts) {
+  let best = null;
+  let bestTotal = -Infinity;
+  for (const a of attempts) {
+    const t = totalScoreClient(a.summary);
+    if (t === null) continue;
+    if (
+      t > bestTotal ||
+      (t === bestTotal &&
+        best !== null &&
+        String(a.createdAt ?? "").localeCompare(String(best.createdAt ?? "")) > 0)
+    ) {
+      best = a;
+      bestTotal = t;
+    }
+  }
+  return best;
 }
 
 async function setActivePracticeQuestion(questionId) {
