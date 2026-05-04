@@ -41,6 +41,8 @@ function defaultFetchStub(url) {
       questions: [stubQuestion],
       meta: { total: 1, filtered: 1, categories: [], statuses: [] }
     };
+  } else if (path === "/api/attempts") {
+    body = { attempts: [] };
   }
 
   return Promise.resolve({

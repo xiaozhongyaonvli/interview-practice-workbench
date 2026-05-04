@@ -5,7 +5,7 @@
 const views = document.querySelectorAll("[data-view]");
 const navLinks = document.querySelectorAll("[data-view-link]");
 
-function showView(name) {
+function showView(name, options = {}) {
   views.forEach((view) => {
     const active = view.dataset.view === name;
     view.hidden = !active;
@@ -22,6 +22,12 @@ function showView(name) {
     } catch {
       // jsdom and some embedded environments throw on scrollTo. Best-effort.
     }
+  }
+
+  // Step 4: when entering the practice view from a question card, hydrate
+  // the hero block + attempt history with that question's real data.
+  if (name === "practice" && options.questionId) {
+    setActivePracticeQuestion(options.questionId);
   }
 }
 
@@ -41,7 +47,9 @@ navLinks.forEach((link) => {
 document.addEventListener("click", (event) => {
   const trigger = event.target.closest?.("[data-open-practice]");
   if (trigger) {
-    showView("practice");
+    const card = trigger.closest("[data-question-id]");
+    const id = card?.dataset.questionId ?? null;
+    showView("practice", { questionId: id });
   }
 });
 
@@ -348,3 +356,182 @@ lastKnownQuery = initialQuery;
 // Best-effort: never throw, never block view switching.
 refreshImportedList(initialQuery).catch(() => {});
 refreshQuestionPool(initialQuery).catch(() => {});
+
+// ---------------------------------------------------------------------------
+// Step 4: practice-view question hydration + answer attempts
+// ---------------------------------------------------------------------------
+
+let currentQuestionId = null;
+
+function statusLabelZh(s) {
+  return (
+    {
+      candidate: "候选",
+      accepted: "已练",
+      ignored: "已忽略",
+      duplicate: "重复",
+      mastered: "已掌握"
+    }[s] ?? s
+  );
+}
+
+async function fetchQuestionById(id) {
+  // The pool fetch by `lastKnownQuery` is the natural place to find the
+  // question — we do NOT add a separate /api/questions/:id endpoint just
+  // for this lookup. If the user came in via a different query (e.g. they
+  // changed lastKnownQuery on a fresh boot), we widen by trying with no
+  // query filter as a fallback.
+  try {
+    const queries = [lastKnownQuery, ""];
+    for (const q of queries) {
+      const url = q
+        ? `/api/questions?query=${encodeURIComponent(q)}`
+        : "/api/questions";
+      const response = await fetch(url);
+      if (!response.ok) continue;
+      const body = await response.json();
+      const found = (body.questions ?? []).find((row) => row.id === id);
+      if (found) return found;
+    }
+  } catch (error) {
+    console.warn("fetchQuestionById failed", error);
+  }
+  return null;
+}
+
+function renderPracticeQuestion(q) {
+  const meta = document.querySelector("[data-question-meta]");
+  const title = document.querySelector("[data-question-title]");
+  const source = document.querySelector("[data-question-source]");
+  const quality = document.querySelector("[data-question-quality]");
+  const answerInput = document.querySelector("[data-answer-input]");
+
+  if (!q) {
+    if (meta) meta.textContent = "未找到该问题";
+    if (title) title.textContent = "请返回题目库重新选择";
+    if (source) source.textContent = "";
+    if (quality) quality.textContent = "—";
+    if (answerInput) answerInput.value = "";
+    return;
+  }
+  if (meta) {
+    meta.textContent = `${q.category} · ${statusLabelZh(q.status)} · Practice Mode`;
+  }
+  if (title) title.textContent = q.question;
+  if (source) {
+    const parts = [];
+    if (q.source) parts.push(`来源:${q.source}`);
+    if (q.sourceTitle) parts.push(q.sourceTitle);
+    if (typeof q.confidence === "number") {
+      parts.push(`confidence ${(q.confidence * 100).toFixed(0)}%`);
+    }
+    source.textContent = parts.join(" · ") || "暂无来源";
+  }
+  if (quality) {
+    quality.textContent = (q.confidence ?? 0) >= 0.7 ? "可练" : "需确认";
+  }
+  if (answerInput) answerInput.value = "";
+}
+
+async function refreshAttemptHistory(questionId) {
+  const list = document.querySelector("[data-attempt-list]");
+  if (!list) return;
+  try {
+    const response = await fetch(
+      `/api/attempts?questionId=${encodeURIComponent(questionId)}`
+    );
+    if (!response.ok) {
+      list.innerHTML = '<p class="imported-empty">读取作答历史失败。</p>';
+      return;
+    }
+    const body = await response.json();
+    const attempts = body.attempts ?? [];
+    if (attempts.length === 0) {
+      list.innerHTML =
+        '<p class="imported-empty">还没有作答记录。保存第一版回答后这里会出现历史。</p>';
+      return;
+    }
+    // Newest first; the API returns oldest-first, so reverse for display.
+    const sorted = attempts.slice().reverse();
+    list.innerHTML = sorted
+      .map((a, i) => {
+        const orderFromOldest = sorted.length - i;
+        const time = escapeHtml(
+          String(a.createdAt ?? "").slice(0, 16).replace("T", " ")
+        );
+        const summary = a.summary?.overallComment ?? "未评分";
+        const klass = i === 0 ? "attempt active" : "attempt";
+        return `<article class="${klass}" data-attempt-id="${escapeHtml(a.attemptId)}">
+          <span>Attempt ${orderFromOldest} · ${time}</span>
+          <p>${escapeHtml(summary)}</p>
+        </article>`;
+      })
+      .join("");
+  } catch (error) {
+    console.warn("refreshAttemptHistory failed", error);
+  }
+}
+
+async function setActivePracticeQuestion(questionId) {
+  currentQuestionId = questionId;
+  if (!questionId) return;
+  const question = await fetchQuestionById(questionId);
+  renderPracticeQuestion(question);
+  await refreshAttemptHistory(questionId);
+}
+
+const saveAttemptBtn = document.querySelector("[data-save-attempt]");
+const attemptStatus = document.querySelector("[data-attempt-status]");
+
+if (saveAttemptBtn) {
+  saveAttemptBtn.addEventListener("click", async () => {
+    setStatus(attemptStatus, "", null);
+    if (!currentQuestionId) {
+      setStatus(attemptStatus, "请先从题目库选择一个问题", "error");
+      return;
+    }
+    const input = document.querySelector("[data-answer-input]");
+    const answer = input ? input.value : "";
+    if (!answer.trim()) {
+      setStatus(attemptStatus, "回答不能为空", "error");
+      return;
+    }
+    try {
+      const response = await fetch("/api/attempts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ questionId: currentQuestionId, answer })
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        setStatus(
+          attemptStatus,
+          `保存失败: ${body?.error ?? `HTTP ${response.status}`}`,
+          "error"
+        );
+        return;
+      }
+      setStatus(attemptStatus, "已保存为第 " + new Date().toLocaleTimeString() + " 的回答", "ok");
+      if (input) input.value = "";
+      await refreshAttemptHistory(currentQuestionId);
+    } catch (error) {
+      setStatus(attemptStatus, `保存失败: ${error?.message ?? error}`, "error");
+    }
+  });
+}
+
+const newAttemptBtn = document.querySelector("[data-new-attempt]");
+if (newAttemptBtn) {
+  newAttemptBtn.addEventListener("click", () => {
+    const input = document.querySelector("[data-answer-input]");
+    if (input) {
+      input.value = "";
+      try {
+        input.focus();
+      } catch {
+        // jsdom may not implement focus reliably; non-fatal.
+      }
+    }
+    setStatus(attemptStatus, "", null);
+  });
+}

@@ -132,27 +132,28 @@
               <button class="ghost" type="button" data-back-home>← 返回题目库</button>
               <button class="primary" type="button">保存为正式卡片</button>
             </div>
-            <div class="question-hero">
+            <div class="question-hero" data-question-hero>
               <div>
-                <span>MySQL · Practice Mode · Attempt 2</span>
-                <h3>慢 SQL 如何排查？</h3>
-                <p>来源：手动粘贴 · MySQL 二面问题整理 · confidence 0.86</p>
+                <span data-question-meta>选择题目库中的问题开始练习</span>
+                <h3 data-question-title>暂未选择问题</h3>
+                <p data-question-source>从首页点击 "开始练习" 进入这里。</p>
               </div>
               <div class="quality-badge">
                 <b>候选质量</b>
-                <strong>可练</strong>
+                <strong data-question-quality>—</strong>
               </div>
             </div>
 
             <div class="answer-section">
               <div class="section-head">
                 <h4>我的回答</h4>
-                <span>建议先写 2-4 个分点，再补工程落地。</span>
+                <span>建议先写 2-4 个分点,再补工程落地。</span>
               </div>
-              <textarea aria-label="我的回答">我会先看慢查询日志，找到耗时比较高的 SQL，然后用 explain 看执行计划，重点看有没有走索引、扫描行数和 extra 里面有没有 filesort。然后根据情况考虑加索引或者改 SQL。</textarea>
+              <textarea aria-label="我的回答" data-answer-input placeholder="在这里写下你的回答..."></textarea>
+              <p class="source-status" data-attempt-status hidden></p>
               <div class="answer-actions">
-                <button type="button">保存草稿</button>
-                <button class="primary" type="button">提交评分</button>
+                <button type="button" data-save-attempt>保存回答</button>
+                <button class="primary" type="button" data-submit-score disabled>提交评分 (Step 5 启用)</button>
               </div>
             </div>
 
@@ -205,21 +206,16 @@
             </div>
           </section>
 
-          <aside class="attempt-panel">
+          <aside class="attempt-panel" data-attempt-panel>
             <h3>重答记录</h3>
-            <article class="attempt active">
-              <span>Attempt 2 · 6.8</span>
-              <p>表达更清楚，但工程落点不足。</p>
-            </article>
-            <article class="attempt">
-              <span>Attempt 1 · 5.4</span>
-              <p>只有 explain 和索引，覆盖过窄。</p>
-            </article>
-            <button class="full" type="button">+ 重新回答</button>
+            <div data-attempt-list>
+              <p class="imported-empty">还没有作答记录。保存第一版回答后这里会出现历史。</p>
+            </div>
+            <button class="full" type="button" data-new-attempt>+ 重新回答</button>
 
             <div class="save-preview">
               <h4>保存预览</h4>
-              <p>保存前确认分类和难度，避免污染正式卡片库。</p>
+              <p>保存前确认分类和难度,避免污染正式卡片库。</p>
               <label>分类
                 <select>
                   <option>MySQL</option>
@@ -235,11 +231,9 @@
                 </select>
               </label>
               <div class="save-checklist">
-                <span class="ok">反馈完整</span>
-                <span class="ok">分类有效</span>
-                <span class="warn">建议再重答一次</span>
+                <span class="warn">需要至少一次完整评分 (Step 5)</span>
               </div>
-              <button class="primary full" type="button">确认保存为卡片</button>
+              <button class="primary full" type="button" disabled>确认保存为卡片 (Step 7 启用)</button>
             </div>
           </aside>
         </div>
