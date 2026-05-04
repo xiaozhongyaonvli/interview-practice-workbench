@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url";
 import { createArticleStore } from "./src/storage/articleStore.js";
 import { createQuestionStore } from "./src/storage/questionStore.js";
 import { createAttemptStore } from "./src/storage/attemptStore.js";
+import { createScoreStore } from "./src/storage/scoreStore.js";
 import { createLlmDebugStore } from "./src/storage/llmDebugStore.js";
 import { createArticleApi } from "./src/api/articles.js";
 import { createQuestionApi } from "./src/api/questions.js";
 import { createAttemptApi } from "./src/api/attempts.js";
+import { createScoringApi } from "./src/api/scoring.js";
 import { sendJson } from "./src/api/http.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
@@ -49,10 +51,12 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
   const articleStore = createArticleStore({ baseDir });
   const questionStore = createQuestionStore({ baseDir });
   const attemptStore = createAttemptStore({ baseDir });
+  const scoreStore = createScoreStore({ baseDir });
   const llmDebugStore = createLlmDebugStore({ baseDir });
   const articleApi = createArticleApi({ articleStore });
   const questionApi = createQuestionApi({ questionStore, llmDebugStore });
-  const attemptApi = createAttemptApi({ attemptStore });
+  const attemptApi = createAttemptApi({ attemptStore, scoreStore });
+  const scoringApi = createScoringApi({ attemptStore, scoreStore, llmDebugStore });
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -103,6 +107,14 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
 
     if (url.pathname === "/api/attempts" && req.method === "GET") {
       await attemptApi.handleList(req, res, url);
+      return;
+    }
+
+    const attemptScoreMatch = url.pathname.match(
+      /^\/api\/attempts\/([A-Za-z0-9_-]+)\/score$/
+    );
+    if (attemptScoreMatch && req.method === "POST") {
+      await scoringApi.handleScore(req, res, attemptScoreMatch[1]);
       return;
     }
 

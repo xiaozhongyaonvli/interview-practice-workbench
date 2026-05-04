@@ -153,9 +153,22 @@
               <p class="source-status" data-attempt-status hidden></p>
               <div class="answer-actions">
                 <button type="button" data-save-attempt>保存回答</button>
-                <button class="primary" type="button" data-submit-score disabled>提交评分 (Step 5 启用)</button>
+                <button class="primary" type="button" data-toggle-score>粘贴评分 JSON</button>
               </div>
             </div>
+
+            <form class="answer-section" id="score-input-form" data-score-form hidden novalidate>
+              <div class="section-head">
+                <h4>粘贴评分 JSON</h4>
+                <span>对最近一次保存的回答生效。模型必须返回 ScoreSummary 结构。</span>
+              </div>
+              <textarea aria-label="评分 JSON" name="rawResponse" placeholder="{&quot;scores&quot;:{...},&quot;primaryTechnicalGap&quot;:&quot;...&quot;,...}"></textarea>
+              <p class="source-status" data-score-status hidden></p>
+              <div class="answer-actions">
+                <button type="button" data-cancel-score>取消</button>
+                <button class="primary" type="submit">提交评分</button>
+              </div>
+            </form>
 
             <div class="feedback-tabs">
               <button class="active" type="button">评分摘要</button>
@@ -166,42 +179,46 @@
               <button type="button">追问</button>
             </div>
 
-            <div class="feedback-card">
-              <div class="inline-alert">
-                <strong>LLM 输出校验通过</strong>
-                <span>已包含 totalScore、五项评分、表达问题、工程思想问题和 retryInstruction。</span>
+            <div class="feedback-card" data-feedback-card>
+              <div class="inline-alert" data-feedback-empty>
+                <strong>还没有评分</strong>
+                <span>保存回答后,粘贴 LLM 评分 JSON 即可在此显示五项评分和三个缺口。</span>
               </div>
-              <div class="feedback-summary">
+              <div class="inline-alert" data-feedback-ok hidden>
+                <strong>LLM 输出校验通过</strong>
+                <span>已包含五项评分、表达问题、工程思想问题和 retryInstruction。</span>
+              </div>
+              <div class="feedback-summary" data-feedback-summary hidden>
                 <div class="big-score">
                   <span>直观总分</span>
-                  <strong>6.8</strong>
-                  <em>中等偏上</em>
+                  <strong data-big-score>—</strong>
+                  <em data-big-score-tier>—</em>
                 </div>
-                <div class="score-list">
-                  <span>技术正确性 <b>7 / 10</b></span>
-                  <span>覆盖完整度 <b>6 / 10</b></span>
-                  <span>逻辑结构 <b>7 / 10</b></span>
-                  <span>表达清晰度 <b>7 / 10</b></span>
-                  <span>面试表现 <b>6 / 10</b></span>
+                <div class="score-list" data-score-list>
+                  <span>技术正确性 <b>—</b></span>
+                  <span>覆盖完整度 <b>—</b></span>
+                  <span>逻辑结构 <b>—</b></span>
+                  <span>表达清晰度 <b>—</b></span>
+                  <span>面试表现 <b>—</b></span>
                 </div>
               </div>
-              <div class="gap-grid">
+              <div class="gap-grid" data-gap-grid hidden>
                 <article>
                   <h5>技术缺口</h5>
-                  <p>没有覆盖锁等待、统计信息、数据分布和排序回表等关键原因。</p>
+                  <p data-gap-technical>—</p>
                 </article>
                 <article>
                   <h5>表达缺口</h5>
-                  <p>开头没有先给排查框架，听起来像想到哪说到哪。</p>
+                  <p data-gap-expression>—</p>
                 </article>
                 <article>
                   <h5>工程思想缺口</h5>
-                  <p>缺少验证、灰度、回滚和线上风险控制。</p>
+                  <p data-gap-engineering>—</p>
                 </article>
               </div>
-              <div class="retry-box">
+              <div class="retry-box" data-retry-box hidden>
                 <h5>retryInstruction</h5>
-                <p>下一版按“确认影响范围 -> 定位 SQL -> 执行计划和资源拆因 -> 优化验证 -> 上线回滚”这个顺序回答。</p>
+                <p data-retry-instruction>—</p>
               </div>
             </div>
           </section>

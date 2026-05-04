@@ -449,17 +449,27 @@ async function refreshAttemptHistory(questionId) {
     if (attempts.length === 0) {
       list.innerHTML =
         '<p class="imported-empty">还没有作答记录。保存第一版回答后这里会出现历史。</p>';
+      // Track latest as null so a fresh question starts clean.
+      lastAttemptId = null;
       return;
     }
     // Newest first; the API returns oldest-first, so reverse for display.
     const sorted = attempts.slice().reverse();
+    lastAttemptId = sorted[0]?.attemptId ?? null;
+    // If the latest attempt already carries a summary, hydrate the feedback
+    // card so reopening practice shows previously saved scores.
+    if (sorted[0]?.summary) {
+      renderFeedback({ summary: sorted[0].summary });
+    } else {
+      clearFeedbackCard();
+    }
     list.innerHTML = sorted
       .map((a, i) => {
         const orderFromOldest = sorted.length - i;
         const time = escapeHtml(
           String(a.createdAt ?? "").slice(0, 16).replace("T", " ")
         );
-        const summary = a.summary?.overallComment ?? "未评分";
+        const summary = a.summary?.overallComment ?? (a.status === "scored" ? "已评分" : "未评分");
         const klass = i === 0 ? "attempt active" : "attempt";
         return `<article class="${klass}" data-attempt-id="${escapeHtml(a.attemptId)}">
           <span>Attempt ${orderFromOldest} · ${time}</span>
@@ -511,27 +521,164 @@ if (saveAttemptBtn) {
         );
         return;
       }
+      lastAttemptId = body?.attemptId ?? null;
       setStatus(attemptStatus, "已保存为第 " + new Date().toLocaleTimeString() + " 的回答", "ok");
       if (input) input.value = "";
       await refreshAttemptHistory(currentQuestionId);
+      // Hide any leftover feedback render from a previous attempt — the new
+      // attempt has not been scored yet.
+      clearFeedbackCard();
     } catch (error) {
       setStatus(attemptStatus, `保存失败: ${error?.message ?? error}`, "error");
     }
   });
 }
 
-const newAttemptBtn = document.querySelector("[data-new-attempt]");
-if (newAttemptBtn) {
-  newAttemptBtn.addEventListener("click", () => {
-    const input = document.querySelector("[data-answer-input]");
-    if (input) {
-      input.value = "";
-      try {
-        input.focus();
-      } catch {
-        // jsdom may not implement focus reliably; non-fatal.
-      }
+// ---------------------------------------------------------------------------
+// Step 5: scoring-result paste + feedback render
+// ---------------------------------------------------------------------------
+
+let lastAttemptId = null;
+
+const scoreForm = document.getElementById("score-input-form");
+const scoreStatus = scoreForm
+  ? scoreForm.querySelector("[data-score-status]")
+  : null;
+const toggleScoreBtn = document.querySelector("[data-toggle-score]");
+const cancelScoreBtn = document.querySelector("[data-cancel-score]");
+
+function setScoreFormVisible(visible) {
+  if (!scoreForm) return;
+  scoreForm.hidden = !visible;
+  if (!visible) {
+    setStatus(scoreStatus, "", null);
+  }
+}
+
+if (toggleScoreBtn) {
+  toggleScoreBtn.addEventListener("click", () => {
+    setScoreFormVisible(scoreForm?.hidden !== false);
+  });
+}
+if (cancelScoreBtn) {
+  cancelScoreBtn.addEventListener("click", () => setScoreFormVisible(false));
+}
+
+function tierFromTotal(total) {
+  if (total >= 9) return "优秀";
+  if (total >= 8) return "良好";
+  if (total >= 6.5) return "中等偏上";
+  if (total >= 5) return "勉强及格";
+  return "不及格";
+}
+
+function clearFeedbackCard() {
+  const empty = document.querySelector("[data-feedback-empty]");
+  const ok = document.querySelector("[data-feedback-ok]");
+  const summary = document.querySelector("[data-feedback-summary]");
+  const gapGrid = document.querySelector("[data-gap-grid]");
+  const retryBox = document.querySelector("[data-retry-box]");
+  if (empty) empty.hidden = false;
+  if (ok) ok.hidden = true;
+  if (summary) summary.hidden = true;
+  if (gapGrid) gapGrid.hidden = true;
+  if (retryBox) retryBox.hidden = true;
+}
+
+function renderFeedback(scoreRecord) {
+  if (!scoreRecord || !scoreRecord.summary) {
+    clearFeedbackCard();
+    return;
+  }
+  const empty = document.querySelector("[data-feedback-empty]");
+  const ok = document.querySelector("[data-feedback-ok]");
+  const summary = document.querySelector("[data-feedback-summary]");
+  const gapGrid = document.querySelector("[data-gap-grid]");
+  const retryBox = document.querySelector("[data-retry-box]");
+
+  const s = scoreRecord.summary;
+  const total = (
+    s.scores.technicalCorrectness +
+    s.scores.coverageCompleteness +
+    s.scores.logicalStructure +
+    s.scores.expressionClarity +
+    s.scores.interviewPerformance
+  ) / 5;
+
+  if (empty) empty.hidden = true;
+  if (ok) ok.hidden = false;
+  if (summary) summary.hidden = false;
+  if (gapGrid) gapGrid.hidden = false;
+  if (retryBox) retryBox.hidden = false;
+
+  const big = document.querySelector("[data-big-score]");
+  const tier = document.querySelector("[data-big-score-tier]");
+  if (big) big.textContent = total.toFixed(1);
+  if (tier) tier.textContent = tierFromTotal(total);
+
+  const list = document.querySelector("[data-score-list]");
+  if (list) {
+    list.innerHTML = `
+      <span>技术正确性 <b>${s.scores.technicalCorrectness} / 10</b></span>
+      <span>覆盖完整度 <b>${s.scores.coverageCompleteness} / 10</b></span>
+      <span>逻辑结构 <b>${s.scores.logicalStructure} / 10</b></span>
+      <span>表达清晰度 <b>${s.scores.expressionClarity} / 10</b></span>
+      <span>面试表现 <b>${s.scores.interviewPerformance} / 10</b></span>
+    `;
+  }
+
+  const gapTech = document.querySelector("[data-gap-technical]");
+  const gapExpr = document.querySelector("[data-gap-expression]");
+  const gapEng = document.querySelector("[data-gap-engineering]");
+  const retryEl = document.querySelector("[data-retry-instruction]");
+  if (gapTech) gapTech.textContent = s.primaryTechnicalGap ?? "—";
+  if (gapExpr) gapExpr.textContent = s.primaryExpressionGap ?? "—";
+  if (gapEng) gapEng.textContent = s.engineeringMindsetGap ?? "—";
+  if (retryEl) retryEl.textContent = s.retryInstruction ?? "—";
+}
+
+if (scoreForm) {
+  scoreForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setStatus(scoreStatus, "", null);
+
+    if (!lastAttemptId) {
+      setStatus(scoreStatus, "请先保存一次回答,然后再粘贴评分", "error");
+      return;
     }
-    setStatus(attemptStatus, "", null);
+
+    const formData = new FormData(scoreForm);
+    const rawResponse = String(formData.get("rawResponse") ?? "");
+    if (!rawResponse.trim()) {
+      setStatus(scoreStatus, "评分 JSON 不能为空", "error");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/attempts/${encodeURIComponent(lastAttemptId)}/score`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ rawResponse })
+        }
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const reason = body?.error ?? `HTTP ${response.status}`;
+        const where = body?.path ? ` (${body.path})` : "";
+        setStatus(scoreStatus, `评分失败: ${reason}${where}`, "error");
+        return;
+      }
+      setStatus(scoreStatus, "评分通过校验", "ok");
+      renderFeedback(body);
+      // Refresh attempt list so the latest summary surfaces in history too.
+      if (currentQuestionId) await refreshAttemptHistory(currentQuestionId);
+      // Auto-collapse the form after a brief moment so the user can see the
+      // OK status, then focus the feedback card.
+      setTimeout(() => setScoreFormVisible(false), 200);
+    } catch (error) {
+      setStatus(scoreStatus, `评分失败: ${error?.message ?? error}`, "error");
+    }
   });
 }

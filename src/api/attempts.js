@@ -31,7 +31,7 @@ function requireString(value, field, code = "ATTEMPT_INPUT_INVALID") {
   }
 }
 
-export function createAttemptApi({ attemptStore, now = nowIso }) {
+export function createAttemptApi({ attemptStore, scoreStore = null, now = nowIso }) {
   if (!attemptStore) throw new Error("createAttemptApi: attemptStore is required");
 
   async function handleCreate(req, res) {
@@ -77,7 +77,24 @@ export function createAttemptApi({ attemptStore, now = nowIso }) {
       // Oldest first matches the "history" reading order; the front-end
       // can reverse if it wants newest at the top.
       records.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-      sendJson(res, 200, { attempts: records });
+
+      // Step 5: opportunistically attach the latest score for each attempt
+      // so the front-end can render a single-shot history without N+1
+      // scoring fetches.
+      let attempts = records;
+      if (scoreStore) {
+        const ids = records.map((r) => r.attemptId);
+        const latest = await scoreStore.latestByAttemptIds(ids);
+        attempts = records.map((r) => ({
+          ...r,
+          status: latest.has(r.attemptId) ? "scored" : r.status,
+          summary: latest.get(r.attemptId)?.summary ?? null,
+          feedback: latest.get(r.attemptId)?.feedback ?? null,
+          scoredAt: latest.get(r.attemptId)?.scoredAt ?? null
+        }));
+      }
+
+      sendJson(res, 200, { attempts });
     } catch (err) {
       sendError(res, err);
     }
