@@ -1,0 +1,12 @@
+node_modules/
+data/*.json
+data/*.jsonl
+data/articles/
+data/questions/
+data/attempts/
+data/cards/
+data/llm/
+coverage/
+.env
+.DS_Store
+npm-debug.log*

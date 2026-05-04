@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>面经训练台</title>
+    <link rel="stylesheet" href="phase-a-shotgun.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">本地训练工作台</p>
+        <h1>面经训练台</h1>
+        <p>从真实面经抽题，回答、评分、重答，最后沉淀成卡片。</p>
+      </div>
+      <div class="header-actions">
+        <nav class="top-nav" aria-label="主导航">
+          <a class="active" href="#home" data-view-link="home">题目库</a>
+          <a href="#practice" data-view-link="practice">练习台</a>
+          <a href="#cards">卡片库</a>
+        </nav>
+        <button class="ghost">导入文章</button>
+        <button class="primary">+ 新建训练卡片</button>
+      </div>
+    </header>
+
+    <main class="page">
+      <section id="home" class="screen active-view" data-view="home">
+        <div class="screen-title">
+          <div>
+            <p class="eyebrow">题目库</p>
+            <h2>方向分类与训练卡片</h2>
+          </div>
+          <p>选择方向后快速筛出候选问题，未练习、待重答和可沉淀卡片都在这里进入。</p>
+        </div>
+
+        <div class="home-layout">
+          <aside class="category-sidebar">
+            <div class="sidebar-head">
+              <h3>训练方向</h3>
+              <p>按方向组织问题池和已沉淀卡片。</p>
+            </div>
+            <nav class="category-nav">
+              <button class="active"><span>全部</span><b>42</b></button>
+              <button><span>MySQL</span><b>13</b></button>
+              <button><span>Redis</span><b>9</b></button>
+              <button><span>Java</span><b>8</b></button>
+              <button><span>计网</span><b>6</b></button>
+              <button><span>Agent</span><b>6</b></button>
+            </nav>
+            <div class="source-box">
+              <h4>获取新题</h4>
+              <div class="source-tabs">
+                <button class="active">手动粘贴</button>
+                <button>牛客</button>
+              </div>
+              <input value="mysql" aria-label="方向关键词">
+              <button class="full">抽取面经问题</button>
+            </div>
+          </aside>
+
+          <section class="home-main">
+            <div class="metric-strip" aria-label="训练概览">
+              <div><b>42</b><span>总问题</span></div>
+              <div><b>17</b><span>已作答</span></div>
+              <div><b>6.9</b><span>平均分</span></div>
+              <div><b>5</b><span>待重答</span></div>
+            </div>
+
+            <div class="toolbar">
+              <div>
+                <h3>训练卡片</h3>
+                <p>12 个候选问题，7 个已练习，3 个可沉淀。</p>
+              </div>
+              <div class="toolbar-actions">
+                <input type="search" placeholder="搜索问题、标签、来源">
+                <button class="ghost">筛选</button>
+                <button class="primary">+ 新建</button>
+              </div>
+            </div>
+
+            <div class="card-grid">
+              <article class="training-card hot">
+                <div class="card-topline">
+                  <span>MySQL</span>
+                  <em>需要重答</em>
+                </div>
+                <h4>慢 SQL 如何排查？</h4>
+                <p>最近评分 6.8 / 10，工程思想不足，缺少验证和回滚。</p>
+                <div class="score-row">
+                  <span>表达 7</span>
+                  <span>工程 6</span>
+                  <span>2 attempts</span>
+                </div>
+                <div class="card-action-row">
+                  <button class="primary" data-open-practice>继续重答</button>
+                  <button class="ghost" data-open-practice>查看反馈</button>
+                </div>
+              </article>
+              <article class="training-card">
+                <div class="card-topline">
+                  <span>MySQL</span>
+                  <em>候选</em>
+                </div>
+                <h4>索引失效有哪些情况？</h4>
+                <p>来自牛客面经，尚未开始练习。</p>
+                <div class="score-row">
+                  <span>0 attempts</span>
+                  <span>NowCoder</span>
+                </div>
+                <div class="card-action-row">
+                  <button class="primary" data-open-practice>开始练习</button>
+                  <button class="ghost">忽略</button>
+                </div>
+              </article>
+              <article class="training-card mastered">
+                <div class="card-topline">
+                  <span>Redis</span>
+                  <em>可保存</em>
+                </div>
+                <h4>Redis 热 key 如何处理？</h4>
+                <p>最近评分 8.2 / 10，表达结构清楚，工程落点完整。</p>
+                <div class="score-row">
+                  <span>表达 8</span>
+                  <span>工程 8</span>
+                  <span>3 attempts</span>
+                </div>
+                <div class="card-action-row">
+                  <button class="primary">保存卡片</button>
+                  <button class="ghost" data-open-practice>再练一次</button>
+                </div>
+              </article>
+              <article class="training-card add-card">
+                <strong>+</strong>
+                <h4>创建新训练卡片</h4>
+                <p>手动录入题目，或粘贴文章后抽题。</p>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="practice" class="screen" data-view="practice" hidden>
+        <div class="screen-title">
+          <div>
+            <p class="eyebrow">Detail</p>
+            <h2>详情页：作答、评分、重答、保存</h2>
+          </div>
+          <p>用户点击首页卡片后进入这个详情训练页，长反馈不挤在首页。</p>
+        </div>
+
+        <div class="detail-layout">
+          <section class="detail-main">
+            <div class="detail-nav">
+              <button class="ghost" data-back-home>← 返回题目库</button>
+              <button class="primary">保存为正式卡片</button>
+            </div>
+            <div class="question-hero">
+              <div>
+                <span>MySQL · Practice Mode · Attempt 2</span>
+                <h3>慢 SQL 如何排查？</h3>
+                <p>来源：手动粘贴 · MySQL 二面问题整理 · confidence 0.86</p>
+              </div>
+              <div class="quality-badge">
+                <b>候选质量</b>
+                <strong>可练</strong>
+              </div>
+            </div>
+
+            <div class="answer-section">
+              <div class="section-head">
+                <h4>我的回答</h4>
+                <span>建议先写 2-4 个分点，再补工程落地。</span>
+              </div>
+              <textarea aria-label="我的回答">我会先看慢查询日志，找到耗时比较高的 SQL，然后用 explain 看执行计划，重点看有没有走索引、扫描行数和 extra 里面有没有 filesort。然后根据情况考虑加索引或者改 SQL。</textarea>
+              <div class="answer-actions">
+                <button>保存草稿</button>
+                <button class="primary">提交评分</button>
+              </div>
+            </div>
+
+            <div class="feedback-tabs">
+              <button class="active">评分摘要</button>
+              <button>表达能力</button>
+              <button>工程思想</button>
+              <button>技术分析</button>
+              <button>高分答案</button>
+              <button>追问</button>
+            </div>
+
+            <div class="feedback-card">
+              <div class="inline-alert">
+                <strong>LLM 输出校验通过</strong>
+                <span>已包含 totalScore、五项评分、表达问题、工程思想问题和 retryInstruction。</span>
+              </div>
+              <div class="feedback-summary">
+                <div class="big-score">
+                  <span>直观总分</span>
+                  <strong>6.8</strong>
+                  <em>中等偏上</em>
+                </div>
+                <div class="score-list">
+                  <span>技术正确性 <b>7 / 10</b></span>
+                  <span>覆盖完整度 <b>6 / 10</b></span>
+                  <span>逻辑结构 <b>7 / 10</b></span>
+                  <span>表达清晰度 <b>7 / 10</b></span>
+                  <span>面试表现 <b>6 / 10</b></span>
+                </div>
+              </div>
+              <div class="gap-grid">
+                <article>
+                  <h5>技术缺口</h5>
+                  <p>没有覆盖锁等待、统计信息、数据分布和排序回表等关键原因。</p>
+                </article>
+                <article>
+                  <h5>表达缺口</h5>
+                  <p>开头没有先给排查框架，听起来像想到哪说到哪。</p>
+                </article>
+                <article>
+                  <h5>工程思想缺口</h5>
+                  <p>缺少验证、灰度、回滚和线上风险控制。</p>
+                </article>
+              </div>
+              <div class="retry-box">
+                <h5>retryInstruction</h5>
+                <p>下一版按“确认影响范围 -> 定位 SQL -> 执行计划和资源拆因 -> 优化验证 -> 上线回滚”这个顺序回答。</p>
+              </div>
+            </div>
+          </section>
+
+          <aside class="attempt-panel">
+            <h3>重答记录</h3>
+            <article class="attempt active">
+              <span>Attempt 2 · 6.8</span>
+              <p>表达更清楚，但工程落点不足。</p>
+            </article>
+            <article class="attempt">
+              <span>Attempt 1 · 5.4</span>
+              <p>只有 explain 和索引，覆盖过窄。</p>
+            </article>
+            <button class="full">+ 重新回答</button>
+
+            <div class="save-preview">
+              <h4>保存预览</h4>
+              <p>保存前确认分类和难度，避免污染正式卡片库。</p>
+              <label>分类
+                <select>
+                  <option>MySQL</option>
+                  <option>Redis</option>
+                  <option>Java</option>
+                </select>
+              </label>
+              <label>难度
+                <select>
+                  <option>中等</option>
+                  <option>简单</option>
+                  <option>困难</option>
+                </select>
+              </label>
+              <div class="save-checklist">
+                <span class="ok">反馈完整</span>
+                <span class="ok">分类有效</span>
+                <span class="warn">建议再重答一次</span>
+              </div>
+              <button class="primary full">确认保存为卡片</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const views = document.querySelectorAll("[data-view]");
+      const navLinks = document.querySelectorAll("[data-view-link]");
+
+      function showView(name) {
+        views.forEach((view) => {
+          const active = view.dataset.view === name;
+          view.hidden = !active;
+          view.classList.toggle("active-view", active);
+        });
+        navLinks.forEach((link) => {
+          link.classList.toggle("active", link.dataset.viewLink === name);
+        });
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      document.querySelectorAll("[data-open-practice]").forEach((button) => {
+        button.addEventListener("click", () => showView("practice"));
+      });
+
+      document.querySelectorAll("[data-back-home]").forEach((button) => {
+        button.addEventListener("click", () => showView("home"));
+      });
+
+      navLinks.forEach((link) => {
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          showView(link.dataset.viewLink);
+        });
+      });
+    </script>
+  </body>
+</html>
