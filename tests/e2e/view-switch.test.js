@@ -1,39 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { JSDOM } from "jsdom";
-
-// Build a fresh DOM for each test by inlining public/app.js into public/index.html.
-// We do not start the HTTP server because Step 0 e2e only verifies browser-side
-// view switching, which is decoupled from server.js by design.
-//
-// app.js is injected just before </body> rather than in <head>: the original page
-// uses <script defer>, which the browser runs after DOM parsing. jsdom's
-// runScripts: "dangerously" executes inline scripts synchronously where they
-// appear, so a head-injected copy would query an empty body and bind no events.
-async function buildDom() {
-  const htmlUrl = new URL("../../public/index.html", import.meta.url);
-  const scriptUrl = new URL("../../public/app.js", import.meta.url);
-
-  const [html, script] = await Promise.all([
-    readFile(htmlUrl, "utf8"),
-    readFile(scriptUrl, "utf8")
-  ]);
-
-  const inlined = html
-    .replace(/<script\s+defer\s+src="\/app\.js"\s*><\/script>/, "")
-    .replace("</body>", `<script>${script}</script></body>`);
-
-  const dom = new JSDOM(inlined, { runScripts: "dangerously" });
-
-  // jsdom does not implement smooth scroll; suppress "Not implemented" noise.
-  dom.window.scrollTo = () => {};
-
-  return dom;
-}
+import { buildAppDom } from "../helpers/buildAppDom.js";
 
 test("default state shows the home view and hides the practice view", async () => {
-  const dom = await buildDom();
+  const dom = await buildAppDom();
   const { document } = dom.window;
 
   const home = document.querySelector('[data-view="home"]');
@@ -46,7 +16,7 @@ test("default state shows the home view and hides the practice view", async () =
 });
 
 test("clicking a training card opens the practice view", async () => {
-  const dom = await buildDom();
+  const dom = await buildAppDom();
   const { document } = dom.window;
 
   const enterButton = document.querySelector("[data-open-practice]");
@@ -62,7 +32,7 @@ test("clicking a training card opens the practice view", async () => {
 });
 
 test("clicking back-home from the practice view restores the home view", async () => {
-  const dom = await buildDom();
+  const dom = await buildAppDom();
   const { document } = dom.window;
 
   // First navigate into the practice view.
@@ -83,7 +53,7 @@ test("clicking back-home from the practice view restores the home view", async (
 test("top-nav links toggle between home and practice views", async () => {
   // Top-nav <a> entries also drive showView; covering this prevents regressions
   // when later steps add per-view nav state.
-  const dom = await buildDom();
+  const dom = await buildAppDom();
   const { document } = dom.window;
 
   const practiceLink = document.querySelector('[data-view-link="practice"]');

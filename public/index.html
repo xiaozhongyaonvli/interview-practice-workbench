@@ -49,14 +49,34 @@
               <button type="button"><span>计网</span><b>6</b></button>
               <button type="button"><span>Agent</span><b>6</b></button>
             </nav>
-            <div class="source-box">
+            <div class="source-box" id="source-box">
               <h4>获取新题</h4>
-              <div class="source-tabs">
-                <button class="active" type="button">手动粘贴</button>
-                <button type="button">牛客</button>
+              <div class="source-tabs" role="tablist">
+                <button class="active" type="button" data-source-tab="manual">手动粘贴</button>
+                <button type="button" data-source-tab="nowcoder">牛客</button>
               </div>
-              <input value="mysql" aria-label="方向关键词">
-              <button class="full" type="button">抽取面经问题</button>
+
+              <form data-source-panel="manual" class="source-panel" id="manual-import-form" novalidate>
+                <input name="query" value="mysql" placeholder="方向关键词,如 mysql" aria-label="方向关键词" required>
+                <input name="title" placeholder="文章标题" aria-label="文章标题" required>
+                <textarea name="text" placeholder="粘贴面经正文..." aria-label="文章正文" required></textarea>
+                <p class="source-status" data-source-status hidden></p>
+                <button class="primary full" type="submit">保存为文章</button>
+              </form>
+
+              <div data-source-panel="nowcoder" class="source-panel" hidden>
+                <input value="mysql" aria-label="方向关键词" placeholder="方向关键词">
+                <button class="full" type="button" disabled>抓取面经 (Step 8 启用)</button>
+              </div>
+
+              <button class="full" type="button" data-extract-questions disabled>抽取面经问题 (Step 3 启用)</button>
+            </div>
+
+            <div class="imported-articles" id="imported-articles">
+              <h4>最近导入</h4>
+              <ul data-imported-list>
+                <li class="imported-empty">还没有导入的文章</li>
+              </ul>
             </div>
           </aside>
 

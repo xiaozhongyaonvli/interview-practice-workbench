@@ -246,7 +246,6 @@ p {
 }
 
 .source-box {
-  margin-top: auto;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -296,6 +295,103 @@ select {
 
 .source-box input {
   margin: 10px 0;
+}
+
+/* Step 2: manual import form lives inside .source-box and reuses the
+   panel/box visuals. Keep the textarea compact so the sidebar stays usable. */
+.source-panel {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.source-panel[hidden] {
+  display: none;
+}
+
+.source-panel input,
+.source-panel textarea {
+  display: block;
+  width: 100%;
+  margin: 8px 0 0;
+}
+
+.source-panel textarea {
+  min-height: 96px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.source-status {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.source-status[data-source-status-tone="ok"] {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.source-status[data-source-status-tone="error"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.source-panel button[type="submit"] {
+  margin-top: 10px;
+}
+
+.imported-articles {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.imported-articles h4 {
+  margin: 0 0 8px;
+}
+
+.imported-articles ul {
+  margin: 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.imported-articles li {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.imported-articles li + li {
+  margin-top: 4px;
+}
+
+.imported-articles li:hover {
+  background: var(--muted-surface);
+}
+
+.imported-articles .imported-empty {
+  color: var(--muted);
+  background: var(--muted-surface);
+}
+
+.imported-articles li small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .home-main {
