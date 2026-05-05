@@ -4,6 +4,10 @@
 // baseDir is optional. When omitted, callers should not exercise routes that
 // touch storage — they will write into the project's real data/ directory.
 // API tests should always pass a fresh tmp dir.
+//
+// nowCoderAdapter is optional. If provided, the server will use it instead
+// of the default adapter (which uses Node's global fetch). Tests that
+// exercise the nowcoder routes should pass a mock adapter.
 
 import { startServer } from "../../server.js";
 

@@ -345,6 +345,12 @@ select {
   margin-top: 10px;
 }
 
+.source-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .imported-articles {
   margin-top: 14px;
   padding: 12px;

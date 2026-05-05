@@ -836,6 +836,65 @@ function updateSavePreview({ question, bestAttempt }) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Step 8: NowCoder fetch (optional; failure should not block manual paste)
+// ---------------------------------------------------------------------------
+
+const nowcoderForm = document.getElementById("nowcoder-fetch-form");
+const nowcoderStatus = nowcoderForm?.querySelector("[data-source-status]");
+const nowcoderHint = document.querySelector("[data-nowcoder-hint]");
+
+if (nowcoderForm) {
+  nowcoderForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setStatus(nowcoderStatus, "正在抓取牛客面经...", "ok");
+
+    const data = new FormData(nowcoderForm);
+    const query = String(data.get("query") ?? "").trim();
+    const maxArticles = Number.parseInt(String(data.get("maxArticles") ?? "3"), 10);
+    if (!query) {
+      setStatus(nowcoderStatus, "方向不能为空", "error");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/sources/nowcoder/fetch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, maxArticles })
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const reason = body?.error ?? `HTTP ${response.status}`;
+        setStatus(
+          nowcoderStatus,
+          `抓取失败: ${reason} · 可切换到"手动粘贴"继续`,
+          "error"
+        );
+        if (nowcoderHint) {
+          nowcoderHint.textContent = "抓取失败不会影响手动粘贴链路。";
+        }
+        return;
+      }
+      const savedCount = body?.saved?.length ?? 0;
+      const failedCount = body?.failed?.length ?? 0;
+      setStatus(
+        nowcoderStatus,
+        `已保存 ${savedCount} 篇 · ${failedCount} 篇失败`,
+        savedCount > 0 ? "ok" : "error"
+      );
+      // Refresh the imported-articles sidebar so the user sees new entries.
+      await refreshImportedList(query);
+    } catch (error) {
+      setStatus(
+        nowcoderStatus,
+        `抓取失败: ${error?.message ?? error} · 可切换到"手动粘贴"继续`,
+        "error"
+      );
+    }
+  });
+}
+
 if (saveCardForm) {
   saveCardForm.addEventListener("submit", async (event) => {
     event.preventDefault();

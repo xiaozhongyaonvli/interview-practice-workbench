@@ -65,10 +65,13 @@
                 <button class="primary full" type="submit">保存为文章</button>
               </form>
 
-              <div data-source-panel="nowcoder" class="source-panel" hidden>
-                <input value="mysql" aria-label="方向关键词" placeholder="方向关键词">
-                <button class="full" type="button" disabled>抓取面经 (Step 8 启用)</button>
-              </div>
+              <form data-source-panel="nowcoder" class="source-panel" id="nowcoder-fetch-form" hidden novalidate>
+                <input name="query" value="mysql" placeholder="方向关键词" aria-label="方向关键词" required>
+                <input name="maxArticles" value="3" type="number" min="1" max="20" aria-label="抓取篇数">
+                <p class="source-status" data-source-status hidden></p>
+                <button class="primary full" type="submit">抓取面经</button>
+                <p class="source-hint" data-nowcoder-hint>抓取失败时可切换到"手动粘贴"继续训练。</p>
+              </form>
 
               <form data-source-panel="extract" class="source-panel" id="extract-import-form" hidden novalidate>
                 <input name="query" value="mysql" placeholder="方向关键词" aria-label="方向关键词" required>

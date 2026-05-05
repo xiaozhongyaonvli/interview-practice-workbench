@@ -8,11 +8,13 @@ import { createAttemptStore } from "./src/storage/attemptStore.js";
 import { createScoreStore } from "./src/storage/scoreStore.js";
 import { createCardStore } from "./src/storage/cardStore.js";
 import { createLlmDebugStore } from "./src/storage/llmDebugStore.js";
+import { createNowCoderAdapter } from "./src/sources/nowcoderAdapter.js";
 import { createArticleApi } from "./src/api/articles.js";
 import { createQuestionApi } from "./src/api/questions.js";
 import { createAttemptApi } from "./src/api/attempts.js";
 import { createScoringApi } from "./src/api/scoring.js";
 import { createCardsApi } from "./src/api/cards.js";
+import { createSourcesApi } from "./src/api/sources.js";
 import { sendJson } from "./src/api/http.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
@@ -49,18 +51,22 @@ function resolveStaticPath(pathname) {
  * call to createAppServer gets its own store instances — important for
  * concurrent test runs.
  */
-export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
+export function createAppServer({ baseDir = DEFAULT_BASE_DIR, nowCoderAdapter } = {}) {
   const articleStore = createArticleStore({ baseDir });
   const questionStore = createQuestionStore({ baseDir });
   const attemptStore = createAttemptStore({ baseDir });
   const scoreStore = createScoreStore({ baseDir });
   const cardStore = createCardStore({ baseDir });
   const llmDebugStore = createLlmDebugStore({ baseDir });
+  // The caller can inject a mock adapter in tests; production uses the real
+  // adapter wired to Node's global fetch.
+  const nowCoder = nowCoderAdapter ?? createNowCoderAdapter();
   const articleApi = createArticleApi({ articleStore });
   const questionApi = createQuestionApi({ questionStore, llmDebugStore });
   const attemptApi = createAttemptApi({ attemptStore, scoreStore });
   const scoringApi = createScoringApi({ attemptStore, scoreStore, llmDebugStore });
   const cardsApi = createCardsApi({ questionStore, attemptStore, scoreStore, cardStore });
+  const sourcesApi = createSourcesApi({ nowCoderAdapter: nowCoder, articleStore });
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -134,6 +140,13 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
       return;
     }
 
+    // --- Source routes ----------------------------------------------------
+
+    if (url.pathname === "/api/sources/nowcoder/fetch" && req.method === "POST") {
+      await sourcesApi.handleNowCoderFetch(req, res);
+      return;
+    }
+
     // --- Unknown API ------------------------------------------------------
 
     if (url.pathname.startsWith("/api/")) {
@@ -164,8 +177,8 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
   });
 }
 
-export function startServer({ port = 8000, host = "127.0.0.1", baseDir = DEFAULT_BASE_DIR } = {}) {
-  const server = createAppServer({ baseDir });
+export function startServer({ port = 8000, host = "127.0.0.1", baseDir = DEFAULT_BASE_DIR, nowCoderAdapter } = {}) {
+  const server = createAppServer({ baseDir, nowCoderAdapter });
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);
