@@ -18,10 +18,10 @@
         <nav class="top-nav" aria-label="主导航">
           <a class="active" href="#home" data-view-link="home">题目库</a>
           <a href="#practice" data-view-link="practice">练习台</a>
-          <a href="#cards">卡片库</a>
+          <a href="#cards" data-view-link="cards">卡片库</a>
         </nav>
-        <button class="ghost" type="button">导入文章</button>
-        <button class="primary" type="button">+ 新建训练卡片</button>
+        <button class="ghost" type="button" data-header-import>导入文章</button>
+        <button class="primary" type="button" data-header-new-card>+ 新建训练卡片</button>
       </div>
     </header>
 
@@ -41,13 +41,14 @@
               <h3>训练方向</h3>
               <p>按方向组织问题池和已沉淀卡片。</p>
             </div>
-            <nav class="category-nav">
-              <button class="active" type="button"><span>全部</span><b>42</b></button>
-              <button type="button"><span>MySQL</span><b>13</b></button>
-              <button type="button"><span>Redis</span><b>9</b></button>
-              <button type="button"><span>Java</span><b>8</b></button>
-              <button type="button"><span>计网</span><b>6</b></button>
-              <button type="button"><span>Agent</span><b>6</b></button>
+            <nav class="category-nav" data-category-nav>
+              <button class="active" type="button" data-category=""><span>全部</span><b data-category-count="">0</b></button>
+              <button type="button" data-category="MySQL"><span>MySQL</span><b data-category-count="MySQL">0</b></button>
+              <button type="button" data-category="Redis"><span>Redis</span><b data-category-count="Redis">0</b></button>
+              <button type="button" data-category="Java"><span>Java</span><b data-category-count="Java">0</b></button>
+              <button type="button" data-category="计网"><span>计网</span><b data-category-count="计网">0</b></button>
+              <button type="button" data-category="计系统"><span>计系统</span><b data-category-count="计系统">0</b></button>
+              <button type="button" data-category="Agent"><span>Agent</span><b data-category-count="Agent">0</b></button>
             </nav>
             <div class="source-box" id="source-box">
               <h4>获取新题</h4>
@@ -95,21 +96,21 @@
 
           <section class="home-main">
             <div class="metric-strip" aria-label="训练概览">
-              <div><b>42</b><span>总问题</span></div>
-              <div><b>17</b><span>已作答</span></div>
-              <div><b>6.9</b><span>平均分</span></div>
-              <div><b>5</b><span>待重答</span></div>
+              <div><b data-metric="total">0</b><span>总问题</span></div>
+              <div><b data-metric="answered">0</b><span>已作答</span></div>
+              <div><b data-metric="avgScore">—</b><span>平均分</span></div>
+              <div><b data-metric="needsRetry">0</b><span>待重答</span></div>
             </div>
 
             <div class="toolbar">
               <div>
                 <h3>训练卡片</h3>
-                <p>12 个候选问题，7 个已练习，3 个可沉淀。</p>
+                <p data-toolbar-summary>暂无问题</p>
               </div>
               <div class="toolbar-actions">
-                <input type="search" placeholder="搜索问题、标签、来源">
-                <button class="ghost" type="button">筛选</button>
-                <button class="primary" type="button">+ 新建</button>
+                <input type="search" placeholder="搜索问题、标签、来源" data-search-input aria-label="搜索问题">
+                <button class="ghost" type="button" data-clear-filter>清除筛选</button>
+                <button class="primary" type="button" data-new-question>+ 新建</button>
               </div>
             </div>
 
@@ -137,7 +138,7 @@
           <section class="detail-main">
             <div class="detail-nav">
               <button class="ghost" type="button" data-back-home>← 返回题目库</button>
-              <button class="primary" type="button">保存为正式卡片</button>
+              <button class="primary" type="button" data-save-card-top disabled>保存为正式卡片</button>
             </div>
             <div class="question-hero" data-question-hero>
               <div>
@@ -178,13 +179,13 @@
               </div>
             </form>
 
-            <div class="feedback-tabs">
-              <button class="active" type="button">评分摘要</button>
-              <button type="button">表达能力</button>
-              <button type="button">工程思想</button>
-              <button type="button">技术分析</button>
-              <button type="button">高分答案</button>
-              <button type="button">追问</button>
+            <div class="feedback-tabs" data-feedback-tabs>
+              <button class="active" type="button" data-feedback-tab="summary">评分摘要</button>
+              <button type="button" data-feedback-tab="expression">表达</button>
+              <button type="button" data-feedback-tab="engineering">工程</button>
+              <button type="button" data-feedback-tab="technical">技术</button>
+              <button type="button" data-feedback-tab="retry">重答建议</button>
+              <button type="button" data-feedback-tab="raw">原始 JSON</button>
             </div>
 
             <div class="feedback-card" data-feedback-card>
@@ -196,7 +197,8 @@
                 <strong>LLM 输出校验通过</strong>
                 <span>已包含五项评分、表达问题、工程思想问题和 retryInstruction。</span>
               </div>
-              <div class="feedback-summary" data-feedback-summary hidden>
+
+              <div class="feedback-summary" data-feedback-summary hidden data-feedback-section="summary">
                 <div class="big-score">
                   <span>直观总分</span>
                   <strong data-big-score>—</strong>
@@ -210,7 +212,33 @@
                   <span>面试表现 <b>—</b></span>
                 </div>
               </div>
-              <div class="gap-grid" data-gap-grid hidden>
+
+              <div class="feedback-section" data-feedback-section="expression" hidden>
+                <h5>表达缺口</h5>
+                <p data-gap-expression-detail>—</p>
+              </div>
+
+              <div class="feedback-section" data-feedback-section="engineering" hidden>
+                <h5>工程思想缺口</h5>
+                <p data-gap-engineering-detail>—</p>
+              </div>
+
+              <div class="feedback-section" data-feedback-section="technical" hidden>
+                <h5>技术缺口</h5>
+                <p data-gap-technical-detail>—</p>
+              </div>
+
+              <div class="feedback-section" data-feedback-section="retry" hidden>
+                <h5>重答建议</h5>
+                <p data-retry-detail>—</p>
+              </div>
+
+              <div class="feedback-section" data-feedback-section="raw" hidden>
+                <h5>原始评分 JSON</h5>
+                <pre data-raw-summary class="raw-json">—</pre>
+              </div>
+
+              <div class="gap-grid" data-gap-grid hidden data-feedback-section="summary">
                 <article>
                   <h5>技术缺口</h5>
                   <p data-gap-technical>—</p>
@@ -224,7 +252,7 @@
                   <p data-gap-engineering>—</p>
                 </article>
               </div>
-              <div class="retry-box" data-retry-box hidden>
+              <div class="retry-box" data-retry-box hidden data-feedback-section="summary">
                 <h5>retryInstruction</h5>
                 <p data-retry-instruction>—</p>
               </div>
@@ -265,6 +293,23 @@
               <button class="primary full" type="submit" data-save-card-btn disabled>确认保存为卡片</button>
             </form>
           </aside>
+        </div>
+      </section>
+
+      <section id="cards" class="screen" data-view="cards" hidden>
+        <div class="screen-title">
+          <div>
+            <p class="eyebrow">卡片库</p>
+            <h2>已沉淀的训练卡片</h2>
+          </div>
+          <p>这里只保留通过评分校验后正式保存的题卡,数据落在 cards/*.json。</p>
+        </div>
+        <div class="card-grid" data-cards-grid>
+          <article class="training-card add-card">
+            <strong>·</strong>
+            <h4>还没有保存的卡片</h4>
+            <p>在练习详情页通过 LLM 评分后,可以保存最佳回答为正式卡片。</p>
+          </article>
         </div>
       </section>
     </main>

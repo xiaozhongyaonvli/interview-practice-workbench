@@ -400,6 +400,45 @@ select {
   font-weight: 600;
 }
 
+.feedback-section {
+  margin-top: 12px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.feedback-section h5 {
+  margin: 0 0 6px;
+  color: var(--primary);
+}
+
+.feedback-section p {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.feedback-section[hidden] {
+  display: none;
+}
+
+.raw-json {
+  margin: 0;
+  padding: 12px;
+  background: var(--muted-surface);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
 .home-main {
   min-width: 0;
 }

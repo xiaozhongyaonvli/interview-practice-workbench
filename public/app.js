@@ -1,60 +1,31 @@
-// ---------------------------------------------------------------------------
-// View switching
-// ---------------------------------------------------------------------------
-
-const views = document.querySelectorAll("[data-view]");
-const navLinks = document.querySelectorAll("[data-view-link]");
-
-function showView(name, options = {}) {
-  views.forEach((view) => {
-    const active = view.dataset.view === name;
-    view.hidden = !active;
-    view.classList.toggle("active-view", active);
-  });
-
-  navLinks.forEach((link) => {
-    link.classList.toggle("active", link.dataset.viewLink === name);
-  });
-
-  if (typeof window.scrollTo === "function") {
-    try {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch {
-      // jsdom and some embedded environments throw on scrollTo. Best-effort.
-    }
-  }
-
-  // Step 4: when entering the practice view from a question card, hydrate
-  // the hero block + attempt history with that question's real data.
-  if (name === "practice" && options.questionId) {
-    setActivePracticeQuestion(options.questionId);
-  }
-}
-
-document.querySelectorAll("[data-back-home]").forEach((button) => {
-  button.addEventListener("click", () => showView("home"));
-});
-
-navLinks.forEach((link) => {
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    showView(link.dataset.viewLink);
-  });
-});
-
-// data-open-practice is now attached to dynamically-rendered question cards,
-// so we use event delegation on the document to catch them post-render.
-document.addEventListener("click", (event) => {
-  const trigger = event.target.closest?.("[data-open-practice]");
-  if (trigger) {
-    const card = trigger.closest("[data-question-id]");
-    const id = card?.dataset.questionId ?? null;
-    showView("practice", { questionId: id });
-  }
-});
+// Interview Training Workbench — frontend bootstrap.
+//
+// One file by design (no bundler). Sections below mirror the Phase A steps
+// they implement, so each block can be read independently. State lives in
+// module-level variables; the server is the source of truth — every action
+// re-reads from /api/* rather than mutating local copies.
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Module state
+// ---------------------------------------------------------------------------
+
+let currentQuestionId = null;
+let currentQuestion = null;
+let lastAttemptId = null;
+let bestAttemptForSave = null;
+
+// User can filter the question grid by sidebar category and a search keyword.
+// "" means "all categories"; the search box matches question text + tags + source.
+let activeCategory = "";
+let activeSearch = "";
+let lastKnownQuery = "mysql";
+// Cache the last list response so sidebar counts and the toolbar summary can
+// update without a second round-trip.
+let lastQuestionsResponse = { questions: [], meta: null };
+let lastAttemptsByQuestion = new Map(); // questionId -> attempts[]
+
+// ---------------------------------------------------------------------------
+// Generic helpers
 // ---------------------------------------------------------------------------
 
 function escapeHtml(value) {
@@ -78,6 +49,99 @@ function setStatus(node, message, tone) {
   node.textContent = message;
   if (tone) node.dataset.sourceStatusTone = tone;
 }
+
+function statusLabelZh(s) {
+  return (
+    {
+      candidate: "候选",
+      accepted: "已练",
+      ignored: "已忽略",
+      duplicate: "重复",
+      mastered: "已掌握",
+      answered: "已作答",
+      scored: "已评分"
+    }[s] ?? s
+  );
+}
+
+// ---------------------------------------------------------------------------
+// View switching (home / practice / cards)
+// ---------------------------------------------------------------------------
+
+const views = document.querySelectorAll("[data-view]");
+const navLinks = document.querySelectorAll("[data-view-link]");
+
+function showView(name, options = {}) {
+  views.forEach((view) => {
+    const active = view.dataset.view === name;
+    view.hidden = !active;
+    view.classList.toggle("active-view", active);
+  });
+  navLinks.forEach((link) => {
+    link.classList.toggle("active", link.dataset.viewLink === name);
+  });
+
+  if (typeof window.scrollTo === "function") {
+    try {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch {
+      /* jsdom or embedded environments may throw */
+    }
+  }
+
+  if (name === "practice" && options.questionId) {
+    setActivePracticeQuestion(options.questionId);
+  }
+  if (name === "home") {
+    // Refresh the pool + metric strip so scores from the practice view
+    // surface in the toolbar and avg-score immediately.
+    refreshQuestionPool(lastKnownQuery).catch(() => {});
+  }
+  if (name === "cards") {
+    refreshCardsView().catch(() => {});
+  }
+}
+
+document.querySelectorAll("[data-back-home]").forEach((btn) => {
+  btn.addEventListener("click", () => showView("home"));
+});
+
+navLinks.forEach((link) => {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    showView(link.dataset.viewLink);
+  });
+});
+
+// Card "开始练习" buttons are dynamically rendered, so we delegate.
+document.addEventListener("click", (event) => {
+  const trigger = event.target.closest?.("[data-open-practice]");
+  if (!trigger) return;
+  const card = trigger.closest("[data-question-id]");
+  const id = card?.dataset.questionId ?? null;
+  showView("practice", { questionId: id });
+});
+
+// ---------------------------------------------------------------------------
+// Header buttons (导入文章 / + 新建训练卡片)
+// ---------------------------------------------------------------------------
+
+document.querySelector("[data-header-import]")?.addEventListener("click", () => {
+  showView("home");
+  showSourcePanel("manual");
+  document.querySelector("[data-source-tab='manual']")?.classList.add("active");
+  document.getElementById("manual-import-form")?.querySelector("[name=title]")?.focus();
+});
+
+document.querySelector("[data-header-new-card]")?.addEventListener("click", () => {
+  // "新建训练卡片" in the header == 同 toolbar 的 + 新建,跳到导入抽题面板
+  // 因为 Phase A 不允许凭空写卡片,必须先有问题 + attempt + 评分。
+  showView("home");
+  showSourcePanel("extract");
+  document.getElementById("extract-import-form")
+    ?.querySelector("[name=rawResponse]")
+    ?.focus();
+});
 
 // ---------------------------------------------------------------------------
 // Source-box tab switching (manual / nowcoder / extract)
@@ -104,9 +168,7 @@ sourceTabs.forEach((tab) => {
 // ---------------------------------------------------------------------------
 
 const importForm = document.getElementById("manual-import-form");
-const importStatus = importForm
-  ? importForm.querySelector("[data-source-status]")
-  : null;
+const importStatus = importForm?.querySelector("[data-source-status]");
 
 function renderImportedList(articles) {
   const list = document.querySelector("[data-imported-list]");
@@ -117,13 +179,13 @@ function renderImportedList(articles) {
   }
   const recent = articles.slice(-5).reverse();
   list.innerHTML = recent
-    .map((article) => {
-      const title = escapeHtml(article.title ?? "(无标题)");
+    .map((a) => {
+      const title = escapeHtml(a.title ?? "(无标题)");
       const fetchedAt = escapeHtml(
-        String(article.fetchedAt ?? "").slice(0, 16).replace("T", " ")
+        String(a.fetchedAt ?? "").slice(0, 16).replace("T", " ")
       );
-      const queryLabel = escapeHtml(article.query ?? "");
-      return `<li data-imported-id="${escapeHtml(article.id ?? "")}">
+      const queryLabel = escapeHtml(a.query ?? "");
+      return `<li data-imported-id="${escapeHtml(a.id ?? "")}">
         <strong>${title}</strong>
         <small>${fetchedAt} · ${queryLabel}</small>
       </li>`;
@@ -134,9 +196,7 @@ function renderImportedList(articles) {
 async function refreshImportedList(query) {
   if (!query) return;
   try {
-    const response = await fetch(
-      `/api/articles?query=${encodeURIComponent(query)}`
-    );
+    const response = await fetch(`/api/articles?query=${encodeURIComponent(query)}`);
     if (!response.ok) {
       renderImportedList([]);
       return;
@@ -152,14 +212,12 @@ if (importForm) {
   importForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     setStatus(importStatus, "", null);
-
-    const formData = new FormData(importForm);
+    const data = new FormData(importForm);
     const payload = {
-      query: String(formData.get("query") ?? "").trim(),
-      title: String(formData.get("title") ?? "").trim(),
-      text: String(formData.get("text") ?? "")
+      query: String(data.get("query") ?? "").trim(),
+      title: String(data.get("title") ?? "").trim(),
+      text: String(data.get("text") ?? "")
     };
-
     if (!payload.query) return setStatus(importStatus, "方向不能为空", "error");
     if (!payload.title) return setStatus(importStatus, "标题不能为空", "error");
     if (!payload.text.trim()) return setStatus(importStatus, "正文不能为空", "error");
@@ -172,52 +230,65 @@ if (importForm) {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        const reason = body?.error ?? `HTTP ${response.status}`;
-        setStatus(importStatus, `保存失败: ${reason}`, "error");
+        setStatus(importStatus, `保存失败: ${body?.error ?? `HTTP ${response.status}`}`, "error");
         return;
       }
       setStatus(importStatus, `已保存: ${body?.title ?? payload.title}`, "ok");
-      const titleField = importForm.querySelector("[name=title]");
-      const textField = importForm.querySelector("[name=text]");
-      if (titleField) titleField.value = "";
-      if (textField) textField.value = "";
+      importForm.querySelector("[name=title]").value = "";
+      importForm.querySelector("[name=text]").value = "";
+      lastKnownQuery = payload.query;
       await refreshImportedList(payload.query);
     } catch (error) {
-      const message = error && error.message ? error.message : String(error);
-      setStatus(importStatus, `保存失败: ${message}`, "error");
+      setStatus(importStatus, `保存失败: ${error?.message ?? error}`, "error");
     }
   });
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: extraction import + question pool render
+// Step 3: question pool (extraction import + render + ignore action)
 // ---------------------------------------------------------------------------
 
 const extractForm = document.getElementById("extract-import-form");
-const extractStatus = extractForm
-  ? extractForm.querySelector("[data-source-status]")
-  : null;
+const extractStatus = extractForm?.querySelector("[data-source-status]");
 
-function renderQuestionPool(questions) {
+function applyFilters(questions) {
+  return questions.filter((q) => {
+    if (activeCategory && q.category !== activeCategory) return false;
+    if (activeSearch) {
+      const haystack =
+        `${q.question ?? ""} ${(q.tags ?? []).join(" ")} ${q.source ?? ""} ${q.evidence ?? ""}`.toLowerCase();
+      if (!haystack.includes(activeSearch.toLowerCase())) return false;
+    }
+    return true;
+  });
+}
+
+function renderQuestionGrid(questions) {
   const grid = document.querySelector("[data-question-grid]");
   if (!grid) return;
+  const filtered = applyFilters(questions);
 
-  if (!Array.isArray(questions) || questions.length === 0) {
+  if (filtered.length === 0) {
     grid.innerHTML = `
       <article class="training-card add-card" data-add-card>
         <strong>+</strong>
-        <h4>导入抽题以填充问题池</h4>
-        <p>侧栏 "导入抽题" tab 粘贴 LLM JSON,即可生成候选问题。</p>
+        <h4>${activeCategory || activeSearch ? "当前筛选下没有问题" : "导入抽题以填充问题池"}</h4>
+        <p>${
+          activeCategory || activeSearch
+            ? '试试切换"全部"分类或清空搜索框。'
+            : '侧栏 "导入抽题" tab 粘贴 LLM JSON,即可生成候选问题。'
+        }</p>
       </article>`;
     return;
   }
 
-  const statusLabel = (s) =>
-    ({ candidate: "候选", accepted: "已练", ignored: "已忽略", duplicate: "重复", mastered: "已掌握" }[s] ?? s);
-
-  const cards = questions.map((q) => {
+  const cards = filtered.map((q) => {
     const muted = q.status === "ignored" || q.status === "duplicate";
-    const klass = muted ? "training-card muted" : q.status === "mastered" ? "training-card mastered" : "training-card";
+    const klass = muted
+      ? "training-card muted"
+      : q.status === "mastered"
+      ? "training-card mastered"
+      : "training-card";
     const evidence = q.evidence
       ? escapeHtml(String(q.evidence).slice(0, 90))
       : "暂无来源片段";
@@ -225,7 +296,7 @@ function renderQuestionPool(questions) {
     return `<article class="${klass}" data-question-id="${escapeHtml(q.id)}">
       <div class="card-topline">
         <span>${escapeHtml(q.category)}</span>
-        <em>${escapeHtml(statusLabel(q.status))}</em>
+        <em>${escapeHtml(statusLabelZh(q.status))}</em>
       </div>
       <h4>${escapeHtml(q.question)}</h4>
       <p>${evidence}</p>
@@ -241,32 +312,69 @@ function renderQuestionPool(questions) {
     </article>`;
   });
 
-  // Always end with a "+ create" affordance so the grid never feels empty.
   cards.push(`
     <article class="training-card add-card" data-add-card>
       <strong>+</strong>
       <h4>继续导入抽题</h4>
-      <p>粘贴更多 LLM JSON 扩展问题池。</p>
+      <p>粘贴更多 LLM JSON 或调用 LLM 抽题扩展问题池。</p>
     </article>`);
 
   grid.innerHTML = cards.join("");
 }
 
-let lastKnownQuery = "mysql";
+function renderCategoryCounts(questions) {
+  const counts = new Map();
+  for (const q of questions) {
+    counts.set(q.category, (counts.get(q.category) ?? 0) + 1);
+  }
+  document.querySelectorAll("[data-category-count]").forEach((node) => {
+    const cat = node.dataset.categoryCount;
+    node.textContent = cat === "" ? String(questions.length) : String(counts.get(cat) ?? 0);
+  });
+  document.querySelectorAll("[data-category]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.category === activeCategory);
+  });
+}
+
+function renderToolbarSummary(questions) {
+  const summary = document.querySelector("[data-toolbar-summary]");
+  if (!summary) return;
+  const total = questions.length;
+  const candidate = questions.filter((q) => q.status === "candidate").length;
+  const ignored = questions.filter((q) => q.status === "ignored").length;
+  const mastered = questions.filter((q) => q.status === "mastered").length;
+  const filtered = applyFilters(questions).length;
+  if (total === 0) {
+    summary.textContent = "暂无问题";
+    return;
+  }
+  let text = `共 ${total} 个问题 · ${candidate} 候选 · ${ignored} 已忽略 · ${mastered} 已掌握`;
+  if (filtered !== total) {
+    text += ` · 当前筛选 ${filtered}`;
+  }
+  summary.textContent = text;
+}
 
 async function refreshQuestionPool(query) {
   if (!query) query = lastKnownQuery;
   lastKnownQuery = query;
   try {
-    const response = await fetch(
-      `/api/questions?query=${encodeURIComponent(query)}`
-    );
+    const response = await fetch(`/api/questions?query=${encodeURIComponent(query)}`);
     if (!response.ok) {
-      renderQuestionPool([]);
+      lastQuestionsResponse = { questions: [], meta: null };
+      renderQuestionGrid([]);
+      renderCategoryCounts([]);
+      renderToolbarSummary([]);
+      await refreshMetricStrip([]);
       return;
     }
     const body = await response.json();
-    renderQuestionPool(Array.isArray(body.questions) ? body.questions : []);
+    const questions = Array.isArray(body.questions) ? body.questions : [];
+    lastQuestionsResponse = { questions, meta: body.meta ?? null };
+    renderQuestionGrid(questions);
+    renderCategoryCounts(questions);
+    renderToolbarSummary(questions);
+    await refreshMetricStrip(questions);
   } catch (error) {
     console.warn("refreshQuestionPool failed", error);
   }
@@ -276,11 +384,9 @@ if (extractForm) {
   extractForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     setStatus(extractStatus, "", null);
-
-    const formData = new FormData(extractForm);
-    const query = String(formData.get("query") ?? "").trim();
-    const rawResponse = String(formData.get("rawResponse") ?? "");
-
+    const data = new FormData(extractForm);
+    const query = String(data.get("query") ?? "").trim();
+    const rawResponse = String(data.get("rawResponse") ?? "");
     if (!query) return setStatus(extractStatus, "方向不能为空", "error");
     if (!rawResponse.trim()) return setStatus(extractStatus, "抽题 JSON 不能为空", "error");
 
@@ -288,52 +394,40 @@ if (extractForm) {
       const response = await fetch("/api/questions/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          query,
-          source: "manual",
-          rawResponse
-        })
+        body: JSON.stringify({ query, source: "manual", rawResponse })
       });
       const body = await response.json().catch(() => null);
-
       if (!response.ok) {
-        const reason = body?.error ?? `HTTP ${response.status}`;
-        setStatus(extractStatus, `导入失败: ${reason}`, "error");
+        setStatus(extractStatus, `导入失败: ${body?.error ?? `HTTP ${response.status}`}`, "error");
         return;
       }
-
-      const summary = `已导入 ${body.added.length} 条 · 重复 ${body.duplicates.length} · 错误 ${body.errors.length}`;
-      setStatus(extractStatus, summary, body.added.length > 0 ? "ok" : "error");
-      const textField = extractForm.querySelector("[name=rawResponse]");
-      if (textField) textField.value = "";
+      setStatus(
+        extractStatus,
+        `已导入 ${body.added.length} 条 · 重复 ${body.duplicates.length} · 错误 ${body.errors.length}`,
+        body.added.length > 0 ? "ok" : "error"
+      );
+      extractForm.querySelector("[name=rawResponse]").value = "";
+      lastKnownQuery = query;
       await refreshQuestionPool(query);
     } catch (error) {
-      const message = error && error.message ? error.message : String(error);
-      setStatus(extractStatus, `导入失败: ${message}`, "error");
+      setStatus(extractStatus, `导入失败: ${error?.message ?? error}`, "error");
     }
   });
 }
 
-// Step 9: "调用 LLM 抽题" — uses the most-recently saved article for the
-// chosen query as input. Failure surfaces inline so the user can fall back
-// to manual paste.
+// "调用 LLM 抽题" — uses the most-recent article for the chosen query.
 const llmExtractBtn = document.querySelector("[data-llm-extract]");
 if (llmExtractBtn) {
   llmExtractBtn.addEventListener("click", async () => {
     setStatus(extractStatus, "", null);
-    const form = document.getElementById("extract-import-form");
-    const queryInput = form?.querySelector("[name=query]");
+    const queryInput = document
+      .getElementById("extract-import-form")
+      ?.querySelector("[name=query]");
     const query = queryInput?.value?.trim() ?? "";
-    if (!query) {
-      setStatus(extractStatus, "方向不能为空", "error");
-      return;
-    }
+    if (!query) return setStatus(extractStatus, "方向不能为空", "error");
     setStatus(extractStatus, "正在调用 LLM 抽题...", "ok");
     try {
-      // Look up the latest article for this query. Empty -> tell the user.
-      const articleResp = await fetch(
-        `/api/articles?query=${encodeURIComponent(query)}`
-      );
+      const articleResp = await fetch(`/api/articles?query=${encodeURIComponent(query)}`);
       const articleBody = await articleResp.json().catch(() => null);
       const articles = articleBody?.articles ?? [];
       if (articles.length === 0) {
@@ -345,7 +439,6 @@ if (llmExtractBtn) {
         return;
       }
       const latest = articles[articles.length - 1];
-
       const response = await fetch("/api/questions/extract", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -353,12 +446,19 @@ if (llmExtractBtn) {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        const reason = body?.error ?? `HTTP ${response.status}`;
-        setStatus(extractStatus, `LLM 抽题失败: ${reason} · 可改用粘贴 JSON`, "error");
+        setStatus(
+          extractStatus,
+          `LLM 抽题失败: ${body?.error ?? `HTTP ${response.status}`} · 可改用粘贴 JSON`,
+          "error"
+        );
         return;
       }
-      const ok = `LLM 已抽 ${body.added.length} 条 · 重复 ${body.duplicates.length}`;
-      setStatus(extractStatus, ok, body.added.length > 0 ? "ok" : "error");
+      setStatus(
+        extractStatus,
+        `LLM 已抽 ${body.added.length} 条 · 重复 ${body.duplicates.length}`,
+        body.added.length > 0 ? "ok" : "error"
+      );
+      lastKnownQuery = query;
       await refreshQuestionPool(query);
     } catch (error) {
       setStatus(
@@ -370,7 +470,7 @@ if (llmExtractBtn) {
   });
 }
 
-// Delegated PATCH handler for the "忽略" action on each question card.
+// Delegated PATCH handler for the "忽略" action on question cards.
 document.addEventListener("click", async (event) => {
   const target = event.target.closest?.("[data-question-action]");
   if (!target) return;
@@ -378,23 +478,16 @@ document.addEventListener("click", async (event) => {
   const card = target.closest("[data-question-id]");
   const id = card?.dataset.questionId;
   if (!id) return;
+  if (action !== "ignore") return;
 
-  const status = action === "ignore" ? "ignored" : null;
-  if (!status) return;
-
-  // Optimistic UI: mark the card so the user sees the change instantly even
-  // before the server confirms. On failure we re-render from the server.
   if (card) card.classList.add("muted");
-
   try {
     const response = await fetch(`/api/questions/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status: "ignored" })
     });
-    if (!response.ok) {
-      console.warn("question patch failed", response.status);
-    }
+    if (!response.ok) console.warn("question patch failed", response.status);
   } catch (error) {
     console.warn("question patch failed", error);
   }
@@ -402,49 +495,120 @@ document.addEventListener("click", async (event) => {
 });
 
 // ---------------------------------------------------------------------------
-// Initial population
+// Toolbar wiring (search + clear filter + 新建)
 // ---------------------------------------------------------------------------
 
-const initialQuery =
-  importForm?.querySelector("[name=query]")?.value?.trim() || "mysql";
-lastKnownQuery = initialQuery;
+const searchInput = document.querySelector("[data-search-input]");
+const clearFilterBtn = document.querySelector("[data-clear-filter]");
+const newQuestionBtn = document.querySelector("[data-new-question]");
 
-// Best-effort: never throw, never block view switching.
-refreshImportedList(initialQuery).catch(() => {});
-refreshQuestionPool(initialQuery).catch(() => {});
+if (searchInput) {
+  let debounceHandle;
+  searchInput.addEventListener("input", () => {
+    if (debounceHandle) clearTimeout(debounceHandle);
+    debounceHandle = setTimeout(() => {
+      activeSearch = searchInput.value.trim();
+      renderQuestionGrid(lastQuestionsResponse.questions);
+      renderToolbarSummary(lastQuestionsResponse.questions);
+    }, 120);
+  });
+}
+
+if (clearFilterBtn) {
+  clearFilterBtn.addEventListener("click", () => {
+    activeSearch = "";
+    activeCategory = "";
+    if (searchInput) searchInput.value = "";
+    renderQuestionGrid(lastQuestionsResponse.questions);
+    renderCategoryCounts(lastQuestionsResponse.questions);
+    renderToolbarSummary(lastQuestionsResponse.questions);
+  });
+}
+
+if (newQuestionBtn) {
+  newQuestionBtn.addEventListener("click", () => {
+    showSourcePanel("extract");
+    document.getElementById("extract-import-form")
+      ?.querySelector("[name=rawResponse]")
+      ?.focus();
+  });
+}
+
+// Sidebar category buttons
+document.querySelectorAll("[data-category]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    activeCategory = btn.dataset.category;
+    renderQuestionGrid(lastQuestionsResponse.questions);
+    renderCategoryCounts(lastQuestionsResponse.questions);
+    renderToolbarSummary(lastQuestionsResponse.questions);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Metric strip (总问题 / 已作答 / 平均分 / 待重答)
+// ---------------------------------------------------------------------------
+
+async function refreshMetricStrip(questions) {
+  const total = questions.length;
+  const node = (key) => document.querySelector(`[data-metric="${key}"]`);
+  if (node("total")) node("total").textContent = String(total);
+
+  // Tally answered/scored attempts across every visible question. We do a
+  // small N+1 (one /api/attempts call per question) — fine for Phase A
+  // scale (a few dozen questions).
+  let answered = 0;
+  let scored = 0;
+  let totalScoreSum = 0;
+  let totalScoreCount = 0;
+  let needsRetry = 0;
+
+  await Promise.all(
+    questions.map(async (q) => {
+      try {
+        const r = await fetch(`/api/attempts?questionId=${encodeURIComponent(q.id)}`);
+        if (!r.ok) return;
+        const body = await r.json();
+        const list = body.attempts ?? [];
+        lastAttemptsByQuestion.set(q.id, list);
+        if (list.length > 0) answered += 1;
+        const scoredOnes = list.filter((a) => a.summary);
+        if (scoredOnes.length > 0) {
+          scored += 1;
+          // Use the latest scored attempt for the running average.
+          const latest = scoredOnes[scoredOnes.length - 1];
+          const t = totalScoreClient(latest.summary);
+          if (t !== null) {
+            totalScoreSum += t;
+            totalScoreCount += 1;
+            if (t < 7) needsRetry += 1;
+          }
+        }
+      } catch {
+        /* per-question failure shouldn't break the whole strip */
+      }
+    })
+  );
+
+  if (node("answered")) node("answered").textContent = String(answered);
+  if (node("avgScore")) {
+    node("avgScore").textContent =
+      totalScoreCount > 0 ? (totalScoreSum / totalScoreCount).toFixed(1) : "—";
+  }
+  if (node("needsRetry")) node("needsRetry").textContent = String(needsRetry);
+}
 
 // ---------------------------------------------------------------------------
 // Step 4: practice-view question hydration + answer attempts
 // ---------------------------------------------------------------------------
 
-let currentQuestionId = null;
-let currentQuestion = null;
-let bestAttemptForSave = null;
-
-function statusLabelZh(s) {
-  return (
-    {
-      candidate: "候选",
-      accepted: "已练",
-      ignored: "已忽略",
-      duplicate: "重复",
-      mastered: "已掌握"
-    }[s] ?? s
-  );
-}
-
 async function fetchQuestionById(id) {
   // The pool fetch by `lastKnownQuery` is the natural place to find the
-  // question — we do NOT add a separate /api/questions/:id endpoint just
-  // for this lookup. If the user came in via a different query (e.g. they
-  // changed lastKnownQuery on a fresh boot), we widen by trying with no
-  // query filter as a fallback.
+  // question. If we cannot locate it under that query, widen by trying with
+  // no filter as a fallback.
   try {
     const queries = [lastKnownQuery, ""];
     for (const q of queries) {
-      const url = q
-        ? `/api/questions?query=${encodeURIComponent(q)}`
-        : "/api/questions";
+      const url = q ? `/api/questions?query=${encodeURIComponent(q)}` : "/api/questions";
       const response = await fetch(url);
       if (!response.ok) continue;
       const body = await response.json();
@@ -472,9 +636,8 @@ function renderPracticeQuestion(q) {
     if (answerInput) answerInput.value = "";
     return;
   }
-  if (meta) {
+  if (meta)
     meta.textContent = `${q.category} · ${statusLabelZh(q.status)} · Practice Mode`;
-  }
   if (title) title.textContent = q.question;
   if (source) {
     const parts = [];
@@ -495,9 +658,7 @@ async function refreshAttemptHistory(questionId) {
   const list = document.querySelector("[data-attempt-list]");
   if (!list) return;
   try {
-    const response = await fetch(
-      `/api/attempts?questionId=${encodeURIComponent(questionId)}`
-    );
+    const response = await fetch(`/api/attempts?questionId=${encodeURIComponent(questionId)}`);
     if (!response.ok) {
       list.innerHTML = '<p class="imported-empty">读取作答历史失败。</p>';
       updateSavePreview({ question: currentQuestion, bestAttempt: null });
@@ -512,7 +673,6 @@ async function refreshAttemptHistory(questionId) {
       updateSavePreview({ question: currentQuestion, bestAttempt: null });
       return;
     }
-    // Newest first; the API returns oldest-first, so reverse for display.
     const sorted = attempts.slice().reverse();
     lastAttemptId = sorted[0]?.attemptId ?? null;
     if (sorted[0]?.summary) {
@@ -521,8 +681,6 @@ async function refreshAttemptHistory(questionId) {
       clearFeedbackCard();
     }
 
-    // Step 6/7: identify the best-scoring attempt across the list and
-    // compute a per-attempt delta vs its predecessor.
     const bestAttempt = selectBestAttemptClient(attempts);
     updateSavePreview({ question: currentQuestion, bestAttempt });
 
@@ -533,15 +691,12 @@ async function refreshAttemptHistory(questionId) {
           String(a.createdAt ?? "").slice(0, 16).replace("T", " ")
         );
         const total = totalScoreClient(a.summary);
-        const totalLabel =
-          total === null ? "未评分" : `${total.toFixed(1)} / 10`;
+        const totalLabel = total === null ? "未评分" : `${total.toFixed(1)} / 10`;
         const isBest = bestAttempt && a.attemptId === bestAttempt.attemptId;
         const previous = sorted[i + 1];
         const prevTotal = previous ? totalScoreClient(previous.summary) : null;
         const delta =
-          total !== null && prevTotal !== null
-            ? total - prevTotal
-            : null;
+          total !== null && prevTotal !== null ? total - prevTotal : null;
         const deltaLabel =
           delta === null
             ? ""
@@ -551,12 +706,9 @@ async function refreshAttemptHistory(questionId) {
             ? `<small class="delta delta-down">↓ ${Math.abs(delta).toFixed(1)}</small>`
             : '<small class="delta">持平</small>';
         const summary =
-          a.summary?.overallComment ?? (a.status === "scored" ? "已评分" : "未评分");
-        const klass = [
-          "attempt",
-          i === 0 ? "active" : "",
-          isBest ? "best" : ""
-        ]
+          a.summary?.overallComment ??
+          (a.status === "scored" ? "已评分" : "未评分");
+        const klass = ["attempt", i === 0 ? "active" : "", isBest ? "best" : ""]
           .filter(Boolean)
           .join(" ");
         const bestBadge = isBest
@@ -573,9 +725,6 @@ async function refreshAttemptHistory(questionId) {
     console.warn("refreshAttemptHistory failed", error);
   }
 }
-
-// --- Step 6 inline helpers: keep the module dependency-free, but mirror
-//     src/domain/attemptComparison.js so tests there own the spec.
 
 function totalScoreClient(summary) {
   if (!summary || !summary.scores) return null;
@@ -623,8 +772,7 @@ async function setActivePracticeQuestion(questionId) {
   const question = await fetchQuestionById(questionId);
   currentQuestion = question;
   renderPracticeQuestion(question);
-  // Default the save-preview category to the question's own category so the
-  // user rarely has to change it manually.
+
   const categorySelect = document.querySelector("[data-save-category]");
   if (categorySelect && question?.category) {
     for (const option of categorySelect.options) {
@@ -636,8 +784,6 @@ async function setActivePracticeQuestion(questionId) {
   }
   const difficultySelect = document.querySelector("[data-save-difficulty]");
   if (difficultySelect && question?.difficulty) {
-    // normalizeDifficulty lives only on the server; for display we map
-    // Chinese labels back to en here.
     const zhToEn = { 简单: "easy", 中等: "medium", 困难: "hard" };
     const normalized = zhToEn[question.difficulty] ?? question.difficulty;
     for (const option of difficultySelect.options) {
@@ -682,11 +828,13 @@ if (saveAttemptBtn) {
         return;
       }
       lastAttemptId = body?.attemptId ?? null;
-      setStatus(attemptStatus, "已保存为第 " + new Date().toLocaleTimeString() + " 的回答", "ok");
+      setStatus(
+        attemptStatus,
+        "已保存为第 " + new Date().toLocaleTimeString() + " 的回答",
+        "ok"
+      );
       if (input) input.value = "";
       await refreshAttemptHistory(currentQuestionId);
-      // Hide any leftover feedback render from a previous attempt — the new
-      // attempt has not been scored yet.
       clearFeedbackCard();
     } catch (error) {
       setStatus(attemptStatus, `保存失败: ${error?.message ?? error}`, "error");
@@ -694,35 +842,38 @@ if (saveAttemptBtn) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Step 5: scoring-result paste + feedback render
-// ---------------------------------------------------------------------------
+document.querySelector("[data-new-attempt]")?.addEventListener("click", () => {
+  const input = document.querySelector("[data-answer-input]");
+  if (input) {
+    input.value = "";
+    try {
+      input.focus();
+    } catch {
+      /* jsdom focus may throw */
+    }
+  }
+  setStatus(attemptStatus, "", null);
+});
 
-let lastAttemptId = null;
+// ---------------------------------------------------------------------------
+// Step 5: scoring (paste JSON + LLM auto-score) + feedback render
+// ---------------------------------------------------------------------------
 
 const scoreForm = document.getElementById("score-input-form");
-const scoreStatus = scoreForm
-  ? scoreForm.querySelector("[data-score-status]")
-  : null;
+const scoreStatus = scoreForm?.querySelector("[data-score-status]");
 const toggleScoreBtn = document.querySelector("[data-toggle-score]");
 const cancelScoreBtn = document.querySelector("[data-cancel-score]");
 
 function setScoreFormVisible(visible) {
   if (!scoreForm) return;
   scoreForm.hidden = !visible;
-  if (!visible) {
-    setStatus(scoreStatus, "", null);
-  }
+  if (!visible) setStatus(scoreStatus, "", null);
 }
 
-if (toggleScoreBtn) {
-  toggleScoreBtn.addEventListener("click", () => {
-    setScoreFormVisible(scoreForm?.hidden !== false);
-  });
-}
-if (cancelScoreBtn) {
-  cancelScoreBtn.addEventListener("click", () => setScoreFormVisible(false));
-}
+toggleScoreBtn?.addEventListener("click", () => {
+  setScoreFormVisible(scoreForm?.hidden !== false);
+});
+cancelScoreBtn?.addEventListener("click", () => setScoreFormVisible(false));
 
 function tierFromTotal(total) {
   if (total >= 9) return "优秀";
@@ -735,41 +886,54 @@ function tierFromTotal(total) {
 function clearFeedbackCard() {
   const empty = document.querySelector("[data-feedback-empty]");
   const ok = document.querySelector("[data-feedback-ok]");
-  const summary = document.querySelector("[data-feedback-summary]");
-  const gapGrid = document.querySelector("[data-gap-grid]");
-  const retryBox = document.querySelector("[data-retry-box]");
+  document
+    .querySelectorAll("[data-feedback-section]")
+    .forEach((node) => (node.hidden = true));
   if (empty) empty.hidden = false;
   if (ok) ok.hidden = true;
-  if (summary) summary.hidden = true;
-  if (gapGrid) gapGrid.hidden = true;
-  if (retryBox) retryBox.hidden = true;
+  // Reset feedback tabs to summary.
+  document.querySelectorAll("[data-feedback-tab]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.feedbackTab === "summary");
+  });
 }
+
+let activeFeedbackTab = "summary";
+
+function showFeedbackSections() {
+  const empty = document.querySelector("[data-feedback-empty]");
+  const ok = document.querySelector("[data-feedback-ok]");
+  if (empty) empty.hidden = true;
+  if (ok) ok.hidden = false;
+  document.querySelectorAll("[data-feedback-section]").forEach((node) => {
+    node.hidden = node.dataset.feedbackSection !== activeFeedbackTab;
+  });
+}
+
+document.querySelectorAll("[data-feedback-tab]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    activeFeedbackTab = btn.dataset.feedbackTab;
+    document
+      .querySelectorAll("[data-feedback-tab]")
+      .forEach((b) => b.classList.toggle("active", b === btn));
+    // Only switch sections if a summary is present (not in empty state).
+    const empty = document.querySelector("[data-feedback-empty]");
+    if (empty && empty.hidden) showFeedbackSections();
+  });
+});
 
 function renderFeedback(scoreRecord) {
   if (!scoreRecord || !scoreRecord.summary) {
     clearFeedbackCard();
     return;
   }
-  const empty = document.querySelector("[data-feedback-empty]");
-  const ok = document.querySelector("[data-feedback-ok]");
-  const summary = document.querySelector("[data-feedback-summary]");
-  const gapGrid = document.querySelector("[data-gap-grid]");
-  const retryBox = document.querySelector("[data-retry-box]");
-
   const s = scoreRecord.summary;
-  const total = (
-    s.scores.technicalCorrectness +
-    s.scores.coverageCompleteness +
-    s.scores.logicalStructure +
-    s.scores.expressionClarity +
-    s.scores.interviewPerformance
-  ) / 5;
-
-  if (empty) empty.hidden = true;
-  if (ok) ok.hidden = false;
-  if (summary) summary.hidden = false;
-  if (gapGrid) gapGrid.hidden = false;
-  if (retryBox) retryBox.hidden = false;
+  const total =
+    (s.scores.technicalCorrectness +
+      s.scores.coverageCompleteness +
+      s.scores.logicalStructure +
+      s.scores.expressionClarity +
+      s.scores.interviewPerformance) /
+    5;
 
   const big = document.querySelector("[data-big-score]");
   const tier = document.querySelector("[data-big-score-tier]");
@@ -787,33 +951,37 @@ function renderFeedback(scoreRecord) {
     `;
   }
 
-  const gapTech = document.querySelector("[data-gap-technical]");
-  const gapExpr = document.querySelector("[data-gap-expression]");
-  const gapEng = document.querySelector("[data-gap-engineering]");
-  const retryEl = document.querySelector("[data-retry-instruction]");
-  if (gapTech) gapTech.textContent = s.primaryTechnicalGap ?? "—";
-  if (gapExpr) gapExpr.textContent = s.primaryExpressionGap ?? "—";
-  if (gapEng) gapEng.textContent = s.engineeringMindsetGap ?? "—";
-  if (retryEl) retryEl.textContent = s.retryInstruction ?? "—";
+  // Tab content (each tab shows one feedback-section)
+  document.querySelector("[data-gap-technical]").textContent = s.primaryTechnicalGap ?? "—";
+  document.querySelector("[data-gap-expression]").textContent = s.primaryExpressionGap ?? "—";
+  document.querySelector("[data-gap-engineering]").textContent = s.engineeringMindsetGap ?? "—";
+  document.querySelector("[data-retry-instruction]").textContent = s.retryInstruction ?? "—";
+
+  document.querySelector("[data-gap-technical-detail]").textContent = s.primaryTechnicalGap ?? "—";
+  document.querySelector("[data-gap-expression-detail]").textContent = s.primaryExpressionGap ?? "—";
+  document.querySelector("[data-gap-engineering-detail]").textContent = s.engineeringMindsetGap ?? "—";
+  document.querySelector("[data-retry-detail]").textContent = s.retryInstruction ?? "—";
+
+  const raw = document.querySelector("[data-raw-summary]");
+  if (raw) raw.textContent = JSON.stringify(s, null, 2);
+
+  showFeedbackSections();
 }
 
 if (scoreForm) {
   scoreForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     setStatus(scoreStatus, "", null);
-
     if (!lastAttemptId) {
       setStatus(scoreStatus, "请先保存一次回答,然后再粘贴评分", "error");
       return;
     }
-
-    const formData = new FormData(scoreForm);
-    const rawResponse = String(formData.get("rawResponse") ?? "");
+    const data = new FormData(scoreForm);
+    const rawResponse = String(data.get("rawResponse") ?? "");
     if (!rawResponse.trim()) {
       setStatus(scoreStatus, "评分 JSON 不能为空", "error");
       return;
     }
-
     try {
       const response = await fetch(
         `/api/attempts/${encodeURIComponent(lastAttemptId)}/score`,
@@ -825,14 +993,16 @@ if (scoreForm) {
       );
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        const reason = body?.error ?? `HTTP ${response.status}`;
         const where = body?.path ? ` (${body.path})` : "";
-        setStatus(scoreStatus, `评分失败: ${reason}${where}`, "error");
+        setStatus(
+          scoreStatus,
+          `评分失败: ${body?.error ?? `HTTP ${response.status}`}${where}`,
+          "error"
+        );
         return;
       }
       setStatus(scoreStatus, "评分通过校验", "ok");
       renderFeedback(body);
-      // Refresh attempt list so the latest summary surfaces in history too.
       if (currentQuestionId) await refreshAttemptHistory(currentQuestionId);
       setTimeout(() => setScoreFormVisible(false), 200);
     } catch (error) {
@@ -841,16 +1011,50 @@ if (scoreForm) {
   });
 }
 
+document.querySelector("[data-llm-score]")?.addEventListener("click", async () => {
+  setStatus(attemptStatus, "", null);
+  if (!lastAttemptId) {
+    setStatus(attemptStatus, "请先保存一次回答,然后再点 LLM 评分", "error");
+    return;
+  }
+  setStatus(attemptStatus, "正在调用 LLM 评分...", "ok");
+  try {
+    const response = await fetch(
+      `/api/attempts/${encodeURIComponent(lastAttemptId)}/llm-score`,
+      { method: "POST" }
+    );
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      const where = body?.path ? ` (${body.path})` : "";
+      setStatus(
+        attemptStatus,
+        `LLM 评分失败: ${body?.error ?? `HTTP ${response.status}`}${where} · 可改用粘贴 JSON`,
+        "error"
+      );
+      return;
+    }
+    setStatus(attemptStatus, "LLM 评分通过校验", "ok");
+    renderFeedback(body);
+    if (currentQuestionId) await refreshAttemptHistory(currentQuestionId);
+  } catch (error) {
+    setStatus(
+      attemptStatus,
+      `LLM 评分失败: ${error?.message ?? error} · 可改用粘贴 JSON`,
+      "error"
+    );
+  }
+});
+
 // ---------------------------------------------------------------------------
-// Step 7: save a scored attempt as a curated CardRecord
+// Step 7: save as official card (sidebar form + top-of-detail button)
 // ---------------------------------------------------------------------------
 
 const saveCardForm = document.querySelector("[data-save-card-form]");
 const saveCardBtn = saveCardForm?.querySelector("[data-save-card-btn]");
+const saveCardTopBtn = document.querySelector("[data-save-card-top]");
 const saveStatus = document.querySelector("[data-save-status]");
 const saveHint = document.querySelector("[data-save-preview-hint]");
 const saveCheckScore = document.querySelector("[data-save-check-score]");
-const saveChecklist = document.querySelector("[data-save-checklist]");
 
 function updateSavePreview({ question, bestAttempt }) {
   bestAttemptForSave = bestAttempt ?? null;
@@ -858,42 +1062,104 @@ function updateSavePreview({ question, bestAttempt }) {
   if (!question) {
     if (saveHint) saveHint.textContent = "请先从题目库选择一个问题。";
     if (saveCardBtn) saveCardBtn.disabled = true;
+    if (saveCardTopBtn) saveCardTopBtn.disabled = true;
     if (saveCheckScore) {
       saveCheckScore.textContent = "未选择问题";
       saveCheckScore.className = "warn";
     }
     return;
   }
-
   if (!bestAttempt || !bestAttempt.summary) {
     if (saveHint) {
       saveHint.textContent =
         "保存前需要至少一次完整评分。粘贴 LLM 评分 JSON 通过校验后,这里会解锁。";
     }
     if (saveCardBtn) saveCardBtn.disabled = true;
+    if (saveCardTopBtn) saveCardTopBtn.disabled = true;
     if (saveCheckScore) {
       saveCheckScore.textContent = "还没有通过校验的评分";
       saveCheckScore.className = "warn";
     }
     return;
   }
-
-  // Scored + ready — unlock the save button. Show which attempt will be
-  // promoted so the user is not surprised.
   const total = totalScoreClient(bestAttempt.summary);
   const totalLabel = total === null ? "—" : total.toFixed(1);
   if (saveHint) {
     saveHint.textContent = `将保存最佳回答 (${totalLabel} / 10),分类和难度可在下面调整。`;
   }
   if (saveCardBtn) saveCardBtn.disabled = false;
+  if (saveCardTopBtn) saveCardTopBtn.disabled = false;
   if (saveCheckScore) {
     saveCheckScore.textContent = `最佳评分 ${totalLabel}`;
     saveCheckScore.className = "ok";
   }
 }
 
+async function submitSaveCard() {
+  setStatus(saveStatus, "", null);
+  if (!bestAttemptForSave) {
+    setStatus(saveStatus, "还没有可保存的评分 attempt", "error");
+    return;
+  }
+  const data = new FormData(saveCardForm);
+  const payload = {
+    attemptId: bestAttemptForSave.attemptId,
+    category: String(data.get("category") ?? ""),
+    difficulty: String(data.get("difficulty") ?? ""),
+    overwrite: false
+  };
+  try {
+    const response = await fetch("/api/cards/from-attempt", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const body = await response.json().catch(() => null);
+    if (response.status === 400 && body?.code === "CARD_DUPLICATE_ID") {
+      const ok = window.confirm
+        ? window.confirm("同名卡片已存在,是否覆盖?")
+        : true;
+      if (!ok) {
+        setStatus(saveStatus, "已取消保存", "error");
+        return;
+      }
+      const retry = await fetch("/api/cards/from-attempt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, overwrite: true })
+      });
+      const retryBody = await retry.json().catch(() => null);
+      if (!retry.ok) {
+        setStatus(
+          saveStatus,
+          `保存失败: ${retryBody?.error ?? `HTTP ${retry.status}`}`,
+          "error"
+        );
+        return;
+      }
+      setStatus(saveStatus, `已覆盖保存: ${retryBody.id}`, "ok");
+      return;
+    }
+    if (!response.ok) {
+      setStatus(saveStatus, `保存失败: ${body?.error ?? `HTTP ${response.status}`}`, "error");
+      return;
+    }
+    setStatus(saveStatus, `已保存卡片: ${body.id}`, "ok");
+  } catch (error) {
+    setStatus(saveStatus, `保存失败: ${error?.message ?? error}`, "error");
+  }
+}
+
+if (saveCardForm) {
+  saveCardForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await submitSaveCard();
+  });
+}
+saveCardTopBtn?.addEventListener("click", () => submitSaveCard());
+
 // ---------------------------------------------------------------------------
-// Step 8: NowCoder fetch (optional; failure should not block manual paste)
+// Step 8: NowCoder fetch
 // ---------------------------------------------------------------------------
 
 const nowcoderForm = document.getElementById("nowcoder-fetch-form");
@@ -904,15 +1170,10 @@ if (nowcoderForm) {
   nowcoderForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     setStatus(nowcoderStatus, "正在抓取牛客面经...", "ok");
-
     const data = new FormData(nowcoderForm);
     const query = String(data.get("query") ?? "").trim();
     const maxArticles = Number.parseInt(String(data.get("maxArticles") ?? "3"), 10);
-    if (!query) {
-      setStatus(nowcoderStatus, "方向不能为空", "error");
-      return;
-    }
-
+    if (!query) return setStatus(nowcoderStatus, "方向不能为空", "error");
     try {
       const response = await fetch("/api/sources/nowcoder/fetch", {
         method: "POST",
@@ -921,15 +1182,12 @@ if (nowcoderForm) {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        const reason = body?.error ?? `HTTP ${response.status}`;
         setStatus(
           nowcoderStatus,
-          `抓取失败: ${reason} · 可切换到"手动粘贴"继续`,
+          `抓取失败: ${body?.error ?? `HTTP ${response.status}`} · 可切换到"手动粘贴"继续`,
           "error"
         );
-        if (nowcoderHint) {
-          nowcoderHint.textContent = "抓取失败不会影响手动粘贴链路。";
-        }
+        if (nowcoderHint) nowcoderHint.textContent = "抓取失败不会影响手动粘贴链路。";
         return;
       }
       const savedCount = body?.saved?.length ?? 0;
@@ -939,7 +1197,7 @@ if (nowcoderForm) {
         `已保存 ${savedCount} 篇 · ${failedCount} 篇失败`,
         savedCount > 0 ? "ok" : "error"
       );
-      // Refresh the imported-articles sidebar so the user sees new entries.
+      lastKnownQuery = query;
       await refreshImportedList(query);
     } catch (error) {
       setStatus(
@@ -951,108 +1209,66 @@ if (nowcoderForm) {
   });
 }
 
-// Step 9: "LLM 评分" button on the practice view. Calls the real LLM via
-// /api/attempts/:id/llm-score. Failure stays inline; user can still paste
-// JSON manually.
-const llmScoreBtn = document.querySelector("[data-llm-score]");
-if (llmScoreBtn) {
-  llmScoreBtn.addEventListener("click", async () => {
-    setStatus(attemptStatus, "", null);
-    if (!lastAttemptId) {
-      setStatus(attemptStatus, "请先保存一次回答,然后再点 LLM 评分", "error");
+// ---------------------------------------------------------------------------
+// 卡片库 view
+// ---------------------------------------------------------------------------
+
+async function refreshCardsView() {
+  const grid = document.querySelector("[data-cards-grid]");
+  if (!grid) return;
+  try {
+    const response = await fetch("/api/cards");
+    if (!response.ok) {
+      grid.innerHTML = `
+        <article class="training-card add-card">
+          <strong>·</strong>
+          <h4>读取卡片库失败</h4>
+          <p>请检查 server 状态或 cards/ 目录权限。</p>
+        </article>`;
       return;
     }
-    setStatus(attemptStatus, "正在调用 LLM 评分...", "ok");
-    try {
-      const response = await fetch(
-        `/api/attempts/${encodeURIComponent(lastAttemptId)}/llm-score`,
-        { method: "POST" }
-      );
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        const reason = body?.error ?? `HTTP ${response.status}`;
-        const where = body?.path ? ` (${body.path})` : "";
-        setStatus(
-          attemptStatus,
-          `LLM 评分失败: ${reason}${where} · 可改用粘贴 JSON`,
-          "error"
-        );
-        return;
-      }
-      setStatus(attemptStatus, "LLM 评分通过校验", "ok");
-      renderFeedback(body);
-      if (currentQuestionId) await refreshAttemptHistory(currentQuestionId);
-    } catch (error) {
-      setStatus(
-        attemptStatus,
-        `LLM 评分失败: ${error?.message ?? error} · 可改用粘贴 JSON`,
-        "error"
-      );
-    }
-  });
-}
-
-if (saveCardForm) {
-  saveCardForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    setStatus(saveStatus, "", null);
-
-    if (!bestAttemptForSave) {
-      setStatus(saveStatus, "还没有可保存的评分 attempt", "error");
+    const body = await response.json();
+    const cards = body.cards ?? [];
+    if (cards.length === 0) {
+      grid.innerHTML = `
+        <article class="training-card add-card">
+          <strong>·</strong>
+          <h4>还没有保存的卡片</h4>
+          <p>在练习详情页通过 LLM 评分后,可以保存最佳回答为正式卡片。</p>
+        </article>`;
       return;
     }
-    const data = new FormData(saveCardForm);
-    const payload = {
-      attemptId: bestAttemptForSave.attemptId,
-      category: String(data.get("category") ?? ""),
-      difficulty: String(data.get("difficulty") ?? ""),
-      overwrite: false
-    };
-
-    try {
-      const response = await fetch("/api/cards/from-attempt", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const body = await response.json().catch(() => null);
-      if (response.status === 400 && body?.code === "CARD_DUPLICATE_ID") {
-        // Confirm once before overwriting.
-        const ok = window.confirm
-          ? window.confirm("同名卡片已存在,是否覆盖?")
-          : true;
-        if (!ok) {
-          setStatus(saveStatus, "已取消保存", "error");
-          return;
-        }
-        const retry = await fetch("/api/cards/from-attempt", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...payload, overwrite: true })
-        });
-        const retryBody = await retry.json().catch(() => null);
-        if (!retry.ok) {
-          setStatus(
-            saveStatus,
-            `保存失败: ${retryBody?.error ?? `HTTP ${retry.status}`}`,
-            "error"
-          );
-          return;
-        }
-        setStatus(saveStatus, `已覆盖保存: ${retryBody.id}`, "ok");
-        return;
-      }
-      if (!response.ok) {
-        setStatus(
-          saveStatus,
-          `保存失败: ${body?.error ?? `HTTP ${response.status}`}`,
-          "error"
-        );
-        return;
-      }
-      setStatus(saveStatus, `已保存卡片: ${body.id}`, "ok");
-    } catch (error) {
-      setStatus(saveStatus, `保存失败: ${error?.message ?? error}`, "error");
-    }
-  });
+    grid.innerHTML = cards
+      .map((card) => {
+        const scores = card.feedback?.performanceScore?.scores ?? {};
+        const total = totalScoreClient({ scores });
+        const totalLabel = total === null ? "—" : total.toFixed(1);
+        return `<article class="training-card mastered" data-card-id="${escapeHtml(card.id)}">
+          <div class="card-topline">
+            <span>${escapeHtml(card.category)}</span>
+            <em>${escapeHtml(card.difficulty)}</em>
+          </div>
+          <h4>${escapeHtml(card.title)}</h4>
+          <p>${escapeHtml((card.feedback?.performanceScore?.overallComment ?? "").slice(0, 80))}</p>
+          <div class="score-row">
+            <span>${totalLabel} / 10</span>
+            <span>${escapeHtml(card.updatedAt ?? card.createdAt ?? "")}</span>
+          </div>
+        </article>`;
+      })
+      .join("");
+  } catch (error) {
+    console.warn("refreshCardsView failed", error);
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
+const initialQuery =
+  importForm?.querySelector("[name=query]")?.value?.trim() || "mysql";
+lastKnownQuery = initialQuery;
+
+refreshImportedList(initialQuery).catch(() => {});
+refreshQuestionPool(initialQuery).catch(() => {});
