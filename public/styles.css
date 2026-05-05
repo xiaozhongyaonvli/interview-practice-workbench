@@ -400,6 +400,92 @@ select {
   font-weight: 600;
 }
 
+.imported-articles li[data-imported-id] {
+  cursor: pointer;
+}
+
+.imported-articles li[data-imported-id]:hover {
+  background: var(--primary-soft);
+}
+
+.imported-articles li[data-imported-id].active {
+  background: var(--primary-soft);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.article-preview {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.article-preview[hidden] {
+  display: none;
+}
+
+.article-preview header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.article-preview header strong {
+  font-size: 14px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.article-preview header button {
+  min-height: auto;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.article-preview-meta {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.article-preview-link {
+  display: inline-block;
+  margin-bottom: 8px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.article-preview-link:hover {
+  text-decoration: underline;
+}
+
+.article-preview-link[hidden] {
+  display: none;
+}
+
+.article-preview-body {
+  margin: 0 0 8px;
+  padding: 8px;
+  background: var(--muted-surface);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 .feedback-section {
   margin-top: 12px;
   padding: 13px;

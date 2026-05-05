@@ -91,6 +91,17 @@
               <ul data-imported-list>
                 <li class="imported-empty">还没有导入的文章</li>
               </ul>
+              <article class="article-preview" data-article-preview hidden>
+                <header>
+                  <strong data-article-preview-title>—</strong>
+                  <button class="ghost" type="button" data-article-preview-close aria-label="关闭预览">×</button>
+                </header>
+                <p class="article-preview-meta" data-article-preview-meta></p>
+                <a class="article-preview-link" data-article-preview-link target="_blank" rel="noopener" hidden>查看牛客原文</a>
+                <pre class="article-preview-body" data-article-preview-body></pre>
+                <p class="source-status" data-article-preview-status hidden></p>
+                <button class="primary full" type="button" data-article-preview-extract>用此文章调用 LLM 抽题</button>
+              </article>
             </div>
           </aside>
 

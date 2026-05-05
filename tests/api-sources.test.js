@@ -173,3 +173,82 @@ test("rejects an unsafe query without calling the adapter", async () => {
     await rm(baseDir, { recursive: true, force: true });
   }
 });
+
+test("re-fetching the same query passes existing sourceUrls to the adapter and reports them in `skipped`", async () => {
+  const baseDir = await makeBase();
+  try {
+    // First call: returns one article; saved into the store.
+    const articleA = {
+      source: "nowcoder",
+      sourceUrl: "https://www.nowcoder.com/discuss/A",
+      query: "mysql",
+      title: "字节",
+      text: "正文 A",
+      fetchedAt: "2026-05-05T10:00:00Z",
+      rawMetadata: { interviewKeywords: [] }
+    };
+    const articleB = {
+      source: "nowcoder",
+      sourceUrl: "https://www.nowcoder.com/discuss/B",
+      query: "mysql",
+      title: "美团",
+      text: "正文 B",
+      fetchedAt: "2026-05-05T10:00:01Z",
+      rawMetadata: { interviewKeywords: [] }
+    };
+
+    let observedExcludeUrls = null;
+    const adapter = {
+      searchAndFetch: async ({ excludeUrls = [] } = {}) => {
+        observedExcludeUrls = [...excludeUrls];
+        // The adapter under test would drop excluded URLs before fetching;
+        // here we mimic that contract directly.
+        const all = [articleA, articleB];
+        const skipped = all
+          .map((a) => a.sourceUrl)
+          .filter((u) => excludeUrls.includes(u));
+        const fresh = all.filter((a) => !excludeUrls.includes(a.sourceUrl));
+        return {
+          searchUrl: "url",
+          links: fresh.map((a) => a.sourceUrl),
+          skipped,
+          records: fresh
+        };
+      }
+    };
+
+    await withServer(async (baseUrl) => {
+      // First fetch: nothing excluded yet.
+      const r1 = await fetch(`${baseUrl}/api/sources/nowcoder/fetch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "mysql" })
+      });
+      const b1 = await r1.json();
+      assert.equal(b1.saved.length, 2);
+      assert.deepEqual(b1.skipped, []);
+
+      // Second fetch on same query: api must compute excludeUrls from
+      // the article store and the adapter must report all existing
+      // sourceUrls in `skipped`.
+      const r2 = await fetch(`${baseUrl}/api/sources/nowcoder/fetch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "mysql" })
+      });
+      const b2 = await r2.json();
+
+      assert.equal(b2.saved.length, 0, "no duplicate record was saved");
+      assert.deepEqual(observedExcludeUrls.sort(), [
+        "https://www.nowcoder.com/discuss/A",
+        "https://www.nowcoder.com/discuss/B"
+      ]);
+      assert.deepEqual(b2.skipped.sort(), [
+        "https://www.nowcoder.com/discuss/A",
+        "https://www.nowcoder.com/discuss/B"
+      ]);
+    }, { baseDir, nowCoderAdapter: adapter });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});

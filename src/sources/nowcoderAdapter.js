@@ -189,8 +189,14 @@ export function createNowCoderAdapter({
   /**
    * Run a search for `query` and return up to `maxArticles` ArticleRecord
    * objects. Rate limiting: `delayMs` between every article fetch.
+   *
+   * `excludeUrls` is an optional iterable of sourceUrl strings the caller
+   * already has stored. We drop matching links BEFORE fetching, so a
+   * re-run on the same query never wastes a network round trip nor
+   * inserts a duplicate. The skipped links are returned as a separate
+   * `skipped` array so the UI can display "已跳过 N 篇旧文章".
    */
-  async function searchAndFetch({ query, maxArticles = 3 } = {}) {
+  async function searchAndFetch({ query, maxArticles = 3, excludeUrls = [] } = {}) {
     if (typeof query !== "string" || !SAFE_QUERY_RE.test(query)) {
       throw new ValidationError(
         "query must be 1-64 chars of A-Za-z0-9_-+.",
@@ -204,16 +210,21 @@ export function createNowCoderAdapter({
       });
     }
 
+    const skipSet = new Set();
+    for (const u of excludeUrls ?? []) {
+      if (typeof u === "string" && u.length > 0) skipSet.add(u);
+    }
+
     const searchUrl = buildSearchUrl(query);
     const searchPage = await fetchHtml(searchUrl);
-    const links = discoverArticleLinks(searchPage.html, searchUrl).slice(
-      0,
-      maxArticles
-    );
+    const allLinks = discoverArticleLinks(searchPage.html, searchUrl);
+    const skipped = allLinks.filter((u) => skipSet.has(u));
+    const fresh = allLinks.filter((u) => !skipSet.has(u)).slice(0, maxArticles);
+
     const records = [];
-    for (let i = 0; i < links.length; i += 1) {
+    for (let i = 0; i < fresh.length; i += 1) {
       if (i > 0 && delayMs > 0) await sleep(delayMs);
-      const link = links[i];
+      const link = fresh[i];
       try {
         const page = await fetchHtml(link);
         records.push(toArticleRecord({ url: page.finalUrl, html: page.html, query }));
@@ -228,7 +239,7 @@ export function createNowCoderAdapter({
         });
       }
     }
-    return { searchUrl, links, records };
+    return { searchUrl, links: fresh, skipped, records };
   }
 
   return {

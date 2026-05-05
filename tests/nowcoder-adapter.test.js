@@ -172,3 +172,45 @@ test("discoverArticleLinks deduplicates trailing query strings", () => {
   assert.ok(links.includes("https://www.nowcoder.com/discuss/1"));
   assert.ok(links.includes("https://www.nowcoder.com/discuss/2"));
 });
+
+test("excludeUrls skips already-known links and reports them as `skipped`", async () => {
+  const fetchedUrls = [];
+  const httpFetch = async (url) => {
+    fetchedUrls.push(url);
+    if (url.includes("/search/")) {
+      return { status: 200, text: SEARCH_HTML_BASE };
+    }
+    return { status: 200, text: ARTICLE_1 };
+  };
+  const adapter = createNowCoderAdapter({ httpFetch });
+
+  const result = await adapter.searchAndFetch({
+    query: "mysql",
+    maxArticles: 5,
+    excludeUrls: ["https://www.nowcoder.com/discuss/123"]
+  });
+
+  // The adapter must NOT have requested /discuss/123 — only /discuss/456.
+  assert.ok(
+    !fetchedUrls.some((u) => u.endsWith("/discuss/123")),
+    "excluded URL must not be re-fetched"
+  );
+  assert.ok(fetchedUrls.some((u) => u.endsWith("/discuss/456")));
+
+  // Only the fresh one ends up in records / links.
+  assert.equal(result.records.length, 1);
+  assert.equal(result.links.length, 1);
+  assert.deepEqual(result.skipped, ["https://www.nowcoder.com/discuss/123"]);
+});
+
+test("excludeUrls=[] (default) preserves the original behavior — every link is fetched", async () => {
+  const httpFetch = async (url) => {
+    if (url.includes("/search/")) return { status: 200, text: SEARCH_HTML_BASE };
+    if (url.endsWith("/discuss/123")) return { status: 200, text: ARTICLE_1 };
+    return { status: 200, text: ARTICLE_2 };
+  };
+  const adapter = createNowCoderAdapter({ httpFetch });
+  const result = await adapter.searchAndFetch({ query: "mysql", maxArticles: 5 });
+  assert.equal(result.records.length, 2);
+  assert.deepEqual(result.skipped, []);
+});

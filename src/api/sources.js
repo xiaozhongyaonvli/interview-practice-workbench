@@ -34,16 +34,29 @@ export function createSourcesApi({ nowCoderAdapter, articleStore }) {
         ? body.maxArticles
         : 3;
 
+      // Build the exclusion set from articles already stored under this
+      // query. Adapter drops matching links before fetching so a re-run
+      // is idempotent: same query == zero new records, not duplicates.
+      let excludeUrls = [];
+      try {
+        const existing = await articleStore.listByQuery(body.query);
+        excludeUrls = existing
+          .map((a) => a.sourceUrl)
+          .filter((u) => typeof u === "string" && u.length > 0);
+      } catch (storeErr) {
+        // If the store cannot be read we fall back to "fetch everything"
+        // — the failure surfaces later when we try to append.
+        excludeUrls = [];
+      }
+
       let result;
       try {
         result = await nowCoderAdapter.searchAndFetch({
           query: body.query,
-          maxArticles
+          maxArticles,
+          excludeUrls
         });
       } catch (err) {
-        // Adapter failed whole-pipeline (e.g. search page 500). Surface a
-        // visible error so the UI can guide the user to the manual paste
-        // fallback — not a silent empty success.
         throw err;
       }
 
@@ -70,8 +83,9 @@ export function createSourcesApi({ nowCoderAdapter, articleStore }) {
 
       sendJson(res, 200, {
         searchUrl: result.searchUrl,
-        discovered: result.links.length,
+        discovered: result.links.length + (result.skipped?.length ?? 0),
         saved,
+        skipped: result.skipped ?? [],
         failed
       });
     } catch (err) {

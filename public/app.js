@@ -164,20 +164,29 @@ sourceTabs.forEach((tab) => {
 });
 
 // ---------------------------------------------------------------------------
-// Step 2: manual article import
+// Step 2: manual article import + recent-imports list (clickable)
 // ---------------------------------------------------------------------------
 
 const importForm = document.getElementById("manual-import-form");
 const importStatus = importForm?.querySelector("[data-source-status]");
 
+// Cache of the last fetched articles list, keyed by id, so click handlers
+// can resolve a li to the full ArticleRecord without an extra round trip.
+const articleCache = new Map();
+let activeArticleId = null;
+
 function renderImportedList(articles) {
   const list = document.querySelector("[data-imported-list]");
   if (!list) return;
+  articleCache.clear();
   if (!Array.isArray(articles) || articles.length === 0) {
     list.innerHTML = '<li class="imported-empty">还没有导入的文章</li>';
+    closeArticlePreview();
     return;
   }
   const recent = articles.slice(-5).reverse();
+  for (const a of recent) articleCache.set(a.id, a);
+
   list.innerHTML = recent
     .map((a) => {
       const title = escapeHtml(a.title ?? "(无标题)");
@@ -185,9 +194,11 @@ function renderImportedList(articles) {
         String(a.fetchedAt ?? "").slice(0, 16).replace("T", " ")
       );
       const queryLabel = escapeHtml(a.query ?? "");
-      return `<li data-imported-id="${escapeHtml(a.id ?? "")}">
+      const sourceTag = a.source === "nowcoder" ? "牛客" : "手动";
+      const isActive = activeArticleId === a.id ? "active" : "";
+      return `<li data-imported-id="${escapeHtml(a.id ?? "")}" class="${isActive}">
         <strong>${title}</strong>
-        <small>${fetchedAt} · ${queryLabel}</small>
+        <small>${fetchedAt} · ${queryLabel} · ${sourceTag}</small>
       </li>`;
     })
     .join("");
@@ -206,6 +217,120 @@ async function refreshImportedList(query) {
   } catch (error) {
     console.warn("refreshImportedList failed", error);
   }
+}
+
+// --- Article preview panel ---------------------------------------------------
+
+const previewPanel = document.querySelector("[data-article-preview]");
+const previewTitle = document.querySelector("[data-article-preview-title]");
+const previewMeta = document.querySelector("[data-article-preview-meta]");
+const previewLink = document.querySelector("[data-article-preview-link]");
+const previewBody = document.querySelector("[data-article-preview-body]");
+const previewStatus = document.querySelector("[data-article-preview-status]");
+const previewExtractBtn = document.querySelector("[data-article-preview-extract]");
+const previewCloseBtn = document.querySelector("[data-article-preview-close]");
+
+function closeArticlePreview() {
+  if (!previewPanel) return;
+  previewPanel.hidden = true;
+  activeArticleId = null;
+  setStatus(previewStatus, "", null);
+  document
+    .querySelectorAll("[data-imported-list] li[data-imported-id]")
+    .forEach((li) => li.classList.remove("active"));
+}
+
+function openArticlePreview(article) {
+  if (!previewPanel || !article) return;
+  activeArticleId = article.id ?? null;
+  previewPanel.hidden = false;
+  setStatus(previewStatus, "", null);
+  if (previewTitle) previewTitle.textContent = article.title ?? "(无标题)";
+  if (previewMeta) {
+    const sourceLabel = article.source === "nowcoder" ? "牛客抓取" : "手动粘贴";
+    const fetchedAt = String(article.fetchedAt ?? "").slice(0, 16).replace("T", " ");
+    previewMeta.textContent = `${sourceLabel} · ${article.query ?? ""} · ${fetchedAt}`;
+  }
+  if (previewLink) {
+    if (article.sourceUrl) {
+      previewLink.hidden = false;
+      previewLink.href = article.sourceUrl;
+      previewLink.textContent =
+        article.source === "nowcoder" ? "查看牛客原文" : "查看原文链接";
+    } else {
+      previewLink.hidden = true;
+      previewLink.removeAttribute("href");
+    }
+  }
+  if (previewBody) {
+    const text = String(article.text ?? "");
+    // Truncate very long pastes so the sidebar stays usable; the full text
+    // is still in storage and reachable via the link or another fetch.
+    previewBody.textContent =
+      text.length > 1500 ? text.slice(0, 1500) + "\n…(已截断,完整正文在 data/articles 里)" : text;
+  }
+
+  // Highlight the active li.
+  document
+    .querySelectorAll("[data-imported-list] li[data-imported-id]")
+    .forEach((li) => {
+      li.classList.toggle("active", li.dataset.importedId === article.id);
+    });
+}
+
+document.addEventListener("click", (event) => {
+  const li = event.target.closest?.("[data-imported-list] li[data-imported-id]");
+  if (!li) return;
+  const id = li.dataset.importedId;
+  const article = articleCache.get(id);
+  if (article) openArticlePreview(article);
+});
+
+previewCloseBtn?.addEventListener("click", () => closeArticlePreview());
+
+if (previewExtractBtn) {
+  previewExtractBtn.addEventListener("click", async () => {
+    setStatus(previewStatus, "", null);
+    const article = activeArticleId ? articleCache.get(activeArticleId) : null;
+    if (!article) {
+      setStatus(previewStatus, "请先点击一篇文章", "error");
+      return;
+    }
+    setStatus(previewStatus, "正在调用 LLM 抽题...", "ok");
+    try {
+      const response = await fetch("/api/questions/extract", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: article.query,
+          articleId: article.id
+        })
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const where = body?.path ? ` (${body.path})` : "";
+        setStatus(
+          previewStatus,
+          `LLM 抽题失败: ${body?.error ?? `HTTP ${response.status}`}${where} · 可改用 "导入抽题" 粘贴 JSON`,
+          "error"
+        );
+        return;
+      }
+      setStatus(
+        previewStatus,
+        `已抽 ${body.added.length} 条 · 重复 ${body.duplicates.length}`,
+        body.added.length > 0 ? "ok" : "error"
+      );
+      lastKnownQuery = article.query;
+      await refreshQuestionPool(article.query);
+    } catch (error) {
+      setStatus(
+        previewStatus,
+        `LLM 抽题失败: ${error?.message ?? error} · 可改用 "导入抽题" 粘贴 JSON`,
+        "error"
+      );
+    }
+  });
 }
 
 if (importForm) {
@@ -1192,10 +1317,14 @@ if (nowcoderForm) {
       }
       const savedCount = body?.saved?.length ?? 0;
       const failedCount = body?.failed?.length ?? 0;
+      const skippedCount = body?.skipped?.length ?? 0;
+      const parts = [`已保存 ${savedCount} 篇`];
+      if (skippedCount > 0) parts.push(`跳过 ${skippedCount} 篇旧文章`);
+      if (failedCount > 0) parts.push(`${failedCount} 篇失败`);
       setStatus(
         nowcoderStatus,
-        `已保存 ${savedCount} 篇 · ${failedCount} 篇失败`,
-        savedCount > 0 ? "ok" : "error"
+        parts.join(" · "),
+        savedCount > 0 || skippedCount > 0 ? "ok" : "error"
       );
       lastKnownQuery = query;
       await refreshImportedList(query);
