@@ -18,7 +18,7 @@ let bestAttemptForSave = null;
 // "" means "all categories"; the search box matches question text + tags + source.
 let activeCategory = "";
 let activeSearch = "";
-let lastKnownQuery = "mysql";
+let lastKnownQuery = "__feed__";
 // Cache the last list response so sidebar counts and the toolbar summary can
 // update without a second round-trip.
 let lastQuestionsResponse = { questions: [], meta: null };
@@ -267,6 +267,11 @@ function renderQuestionGrid(questions) {
       </div>
       <div class="card-action-row">
         <button class="primary" type="button" data-open-practice>开始练习</button>
+        ${
+          q.status === "candidate"
+            ? '<button class="ghost" type="button" data-question-action="accept">保留</button>'
+            : ""
+        }
         <button class="ghost" type="button" data-question-action="ignore">忽略</button>
       </div>
     </article>`;
@@ -301,6 +306,7 @@ function renderToolbarSummary(questions) {
   if (!summary) return;
   const total = questions.length;
   const candidate = questions.filter((q) => q.status === "candidate").length;
+  const accepted = questions.filter((q) => q.status === "accepted").length;
   const ignored = questions.filter((q) => q.status === "ignored").length;
   const mastered = questions.filter((q) => q.status === "mastered").length;
   const filtered = applyFilters(questions).length;
@@ -308,7 +314,7 @@ function renderToolbarSummary(questions) {
     summary.textContent = "暂无问题";
     return;
   }
-  let text = `共 ${total} 个问题 · ${candidate} 候选 · ${ignored} 已忽略 · ${mastered} 已掌握`;
+  let text = `共 ${total} 个问题 · ${candidate} 候选 · ${accepted} 已保留 · ${ignored} 已忽略 · ${mastered} 已掌握`;
   if (filtered !== total) {
     text += ` · 当前筛选 ${filtered}`;
   }
@@ -378,7 +384,7 @@ if (extractForm) {
 // Automatic extraction now happens inside
 // /api/sources/nowcoder/fetch. Manual JSON paste remains as a fallback.
 
-// Delegated PATCH handler for the "忽略" action on question cards.
+// Delegated PATCH handler for question triage actions.
 document.addEventListener("click", async (event) => {
   const target = event.target.closest?.("[data-question-action]");
   if (!target) return;
@@ -386,14 +392,14 @@ document.addEventListener("click", async (event) => {
   const card = target.closest("[data-question-id]");
   const id = card?.dataset.questionId;
   if (!id) return;
-  if (action !== "ignore") return;
+  if (action !== "ignore" && action !== "accept") return;
 
   if (card) card.classList.add("muted");
   try {
     const response = await fetch(`/api/questions/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status: "ignored" })
+      body: JSON.stringify({ status: action === "accept" ? "accepted" : "ignored" })
     });
     if (!response.ok) console.warn("question patch failed", response.status);
   } catch (error) {
@@ -1130,7 +1136,7 @@ if (nowcoderForm) {
           "error"
         );
       }
-      lastKnownQuery = query || lastKnownQuery;
+      lastKnownQuery = body?.partitionQuery ?? query ?? lastKnownQuery;
       await refreshQuestionPool(lastKnownQuery);
     } catch (error) {
       setStatus(

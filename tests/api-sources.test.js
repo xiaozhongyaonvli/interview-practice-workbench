@@ -65,6 +65,7 @@ test("POST /api/sources/nowcoder/fetch saves fetched articles and returns a summ
       });
       assert.equal(response.status, 200);
       const body = await response.json();
+      assert.equal(body.partitionQuery, "mysql");
       assert.equal(body.saved.length, 2);
       assert.equal(body.failed.length, 0);
       assert.equal(body.discovered, 2);
@@ -143,6 +144,8 @@ test("POST /api/sources/nowcoder/fetch reports extraction diagnostics when LLM i
       });
       assert.equal(response.status, 200);
       const body = await response.json();
+      assert.equal(body.partitionQuery, "mysql");
+      assert.equal(body.mode, "search");
       assert.equal(body.savedArticles.length, 2);
       assert.equal(body.savedQuestions.length, 1);
       assert.equal(body.diagnostics.llmConfigured, true);

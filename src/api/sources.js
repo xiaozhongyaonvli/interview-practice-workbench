@@ -211,6 +211,7 @@ export function createSourcesApi({
 
       sendJson(res, 200, {
         mode: result.mode ?? (query === "" ? "feed" : "search"),
+        partitionQuery,
         entryUrl: result.entryUrl ?? result.searchUrl ?? null,
         // legacy field name kept for tests/old callers
         searchUrl: result.searchUrl ?? result.entryUrl ?? null,

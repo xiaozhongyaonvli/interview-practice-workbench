@@ -10,6 +10,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAppDom, flushDom } from "../helpers/buildAppDom.js";
 
+function submitForm(dom, form) {
+  form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+}
+
 function createSim({ nowCoderResponse }) {
   const articles = [];
   const calls = [];
@@ -108,7 +112,7 @@ test("successful fetch shows direct question-pool status", async () => {
   const { document } = dom.window;
 
   document.querySelector('[data-source-tab="nowcoder"]').click();
-  document.getElementById("nowcoder-fetch-form").requestSubmit();
+  submitForm(dom, document.getElementById("nowcoder-fetch-form"));
   await flushDom(dom, 8);
 
   const status = document.querySelector('[data-source-panel="nowcoder"] [data-source-status]');
@@ -117,6 +121,100 @@ test("successful fetch shows direct question-pool status", async () => {
   assert.match(status.textContent, /抓 1 篇/);
   assert.match(status.textContent, /非面经 2/);
   assert.equal(document.querySelector("[data-imported-list]"), null);
+});
+
+test("feed fetch refreshes the __feed__ pool and candidate can be accepted", async () => {
+  const feedQuestion = {
+    id: "feed-q1",
+    question: "Redis 分布式锁有什么问题？",
+    category: "Redis",
+    tags: ["Redis"],
+    difficulty: "medium",
+    source: "nowcoder",
+    sourceUrl: "https://www.nowcoder.com/discuss/1",
+    sourceTitle: "后端开发面经",
+    evidence: "Redis 分布式锁有什么问题",
+    query: "__feed__",
+    confidence: 0.9,
+    status: "candidate",
+    createdAt: "2026-05-05T10:00:00Z",
+    updatedAt: "2026-05-05T10:00:00Z"
+  };
+  const questions = [feedQuestion];
+  const sim = createSim({
+    nowCoderResponse: {
+      status: 200,
+      body: {
+        partitionQuery: "__feed__",
+        savedArticles: [
+          {
+            id: "nowcoder-feed-1",
+            source: "nowcoder",
+            sourceUrl: "https://www.nowcoder.com/discuss/1",
+            query: "__feed__",
+            title: "后端开发面经",
+            text: "正文",
+            fetchedAt: "2026-05-05T10:00:00Z"
+          }
+        ],
+        savedQuestions: [{ id: "feed-q1" }],
+        failed: [],
+        discovered: 1,
+        classifiedNo: 0,
+        skippedUrls: [],
+        searchUrl: "url"
+      }
+    }
+  });
+
+  const originalFetch = sim.fetch;
+  sim.fetch = (url, options = {}) => {
+    const method = (options.method ?? "GET").toUpperCase();
+    const parsed = new URL(String(url), "http://127.0.0.1/");
+    if (parsed.pathname === "/api/questions" && method === "GET") {
+      const q = parsed.searchParams.get("query") ?? "";
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            questions: q === "__feed__" ? questions : [],
+            meta: { total: q === "__feed__" ? questions.length : 0, filtered: 0, categories: [], statuses: [] }
+          }),
+        text: () => Promise.resolve("{}")
+      });
+    }
+    if (parsed.pathname === "/api/questions/feed-q1" && method === "PATCH") {
+      const body = JSON.parse(options.body ?? "{}");
+      questions[0] = { ...questions[0], status: body.status };
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(questions[0]),
+        text: () => Promise.resolve(JSON.stringify(questions[0]))
+      });
+    }
+    return originalFetch(url, options);
+  };
+
+  const dom = await buildAppDom({ fetch: sim.fetch });
+  const { document } = dom.window;
+
+  document.querySelector('[data-source-tab="nowcoder"]').click();
+  submitForm(dom, document.getElementById("nowcoder-fetch-form"));
+  await flushDom(dom, 10);
+
+  const card = document.querySelector('[data-question-id="feed-q1"]');
+  assert.ok(card, "feed question should render after fetch");
+  const acceptBtn = card.querySelector('[data-question-action="accept"]');
+  assert.ok(acceptBtn, "candidate question should expose an accept action");
+
+  acceptBtn.click();
+  await flushDom(dom, 8);
+
+  const summary = document.querySelector("[data-toolbar-summary]");
+  assert.match(summary.textContent, /已保留/);
+  assert.equal(questions[0].status, "accepted");
 });
 
 test("fetch failure leaves the user free to use the manual paste tab", async () => {
@@ -131,7 +229,7 @@ test("fetch failure leaves the user free to use the manual paste tab", async () 
 
   // 1. nowcoder fetch fails
   document.querySelector('[data-source-tab="nowcoder"]').click();
-  document.getElementById("nowcoder-fetch-form").requestSubmit();
+  submitForm(dom, document.getElementById("nowcoder-fetch-form"));
   await flushDom(dom, 8);
   const failStatus = document.querySelector(
     '[data-source-panel="nowcoder"] [data-source-status]'
@@ -145,7 +243,7 @@ test("fetch failure leaves the user free to use the manual paste tab", async () 
   manualForm.querySelector("[name=query]").value = "mysql";
   manualForm.querySelector("[name=title]").value = "手动 MySQL 面经";
   manualForm.querySelector("[name=text]").value = "面经正文...";
-  manualForm.requestSubmit();
+  submitForm(dom, manualForm);
   await flushDom(dom, 8);
 
   // The article store now contains the manually-pasted record.
