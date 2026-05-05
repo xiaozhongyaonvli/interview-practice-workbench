@@ -314,6 +314,62 @@ if (extractForm) {
   });
 }
 
+// Step 9: "调用 LLM 抽题" — uses the most-recently saved article for the
+// chosen query as input. Failure surfaces inline so the user can fall back
+// to manual paste.
+const llmExtractBtn = document.querySelector("[data-llm-extract]");
+if (llmExtractBtn) {
+  llmExtractBtn.addEventListener("click", async () => {
+    setStatus(extractStatus, "", null);
+    const form = document.getElementById("extract-import-form");
+    const queryInput = form?.querySelector("[name=query]");
+    const query = queryInput?.value?.trim() ?? "";
+    if (!query) {
+      setStatus(extractStatus, "方向不能为空", "error");
+      return;
+    }
+    setStatus(extractStatus, "正在调用 LLM 抽题...", "ok");
+    try {
+      // Look up the latest article for this query. Empty -> tell the user.
+      const articleResp = await fetch(
+        `/api/articles?query=${encodeURIComponent(query)}`
+      );
+      const articleBody = await articleResp.json().catch(() => null);
+      const articles = articleBody?.articles ?? [];
+      if (articles.length === 0) {
+        setStatus(
+          extractStatus,
+          "找不到该方向的文章。请先用 '手动粘贴' 或 '牛客' 导入一篇。",
+          "error"
+        );
+        return;
+      }
+      const latest = articles[articles.length - 1];
+
+      const response = await fetch("/api/questions/extract", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, articleId: latest.id })
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const reason = body?.error ?? `HTTP ${response.status}`;
+        setStatus(extractStatus, `LLM 抽题失败: ${reason} · 可改用粘贴 JSON`, "error");
+        return;
+      }
+      const ok = `LLM 已抽 ${body.added.length} 条 · 重复 ${body.duplicates.length}`;
+      setStatus(extractStatus, ok, body.added.length > 0 ? "ok" : "error");
+      await refreshQuestionPool(query);
+    } catch (error) {
+      setStatus(
+        extractStatus,
+        `LLM 抽题失败: ${error?.message ?? error} · 可改用粘贴 JSON`,
+        "error"
+      );
+    }
+  });
+}
+
 // Delegated PATCH handler for the "忽略" action on each question card.
 document.addEventListener("click", async (event) => {
   const target = event.target.closest?.("[data-question-action]");
@@ -889,6 +945,47 @@ if (nowcoderForm) {
       setStatus(
         nowcoderStatus,
         `抓取失败: ${error?.message ?? error} · 可切换到"手动粘贴"继续`,
+        "error"
+      );
+    }
+  });
+}
+
+// Step 9: "LLM 评分" button on the practice view. Calls the real LLM via
+// /api/attempts/:id/llm-score. Failure stays inline; user can still paste
+// JSON manually.
+const llmScoreBtn = document.querySelector("[data-llm-score]");
+if (llmScoreBtn) {
+  llmScoreBtn.addEventListener("click", async () => {
+    setStatus(attemptStatus, "", null);
+    if (!lastAttemptId) {
+      setStatus(attemptStatus, "请先保存一次回答,然后再点 LLM 评分", "error");
+      return;
+    }
+    setStatus(attemptStatus, "正在调用 LLM 评分...", "ok");
+    try {
+      const response = await fetch(
+        `/api/attempts/${encodeURIComponent(lastAttemptId)}/llm-score`,
+        { method: "POST" }
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const reason = body?.error ?? `HTTP ${response.status}`;
+        const where = body?.path ? ` (${body.path})` : "";
+        setStatus(
+          attemptStatus,
+          `LLM 评分失败: ${reason}${where} · 可改用粘贴 JSON`,
+          "error"
+        );
+        return;
+      }
+      setStatus(attemptStatus, "LLM 评分通过校验", "ok");
+      renderFeedback(body);
+      if (currentQuestionId) await refreshAttemptHistory(currentQuestionId);
+    } catch (error) {
+      setStatus(
+        attemptStatus,
+        `LLM 评分失败: ${error?.message ?? error} · 可改用粘贴 JSON`,
         "error"
       );
     }

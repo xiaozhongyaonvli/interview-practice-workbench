@@ -29,7 +29,7 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-export function createQuestionApi({ questionStore, llmDebugStore, now = nowIso }) {
+export function createQuestionApi({ questionStore, llmDebugStore, articleStore = null, llmService = null, now = nowIso }) {
   if (!questionStore) throw new Error("createQuestionApi: questionStore is required");
   if (!llmDebugStore) throw new Error("createQuestionApi: llmDebugStore is required");
 
@@ -226,5 +226,99 @@ export function createQuestionApi({ questionStore, llmDebugStore, now = nowIso }
     }
   }
 
-  return { handleImport, handleList, handleUpdate };
+  return { handleImport, handleList, handleUpdate, handleExtract };
+
+  /**
+   * POST /api/questions/extract — call the real LLM to extract questions
+   * from a saved article. The article is identified by either:
+   *   - articleId: lookup in articleStore
+   *   - or pasted-shape body { query, title, text } for ad-hoc usage
+   *
+   * Successful extractions are persisted into the question pool the same
+   * way as /import, so this route is just /import with an LLM front end.
+   */
+  async function handleExtract(req, res) {
+    try {
+      if (!llmService || !articleStore) {
+        throw new ValidationError(
+          "LLM extraction is not configured (set DEEPSEEK_API_KEY)",
+          { code: "LLM_NOT_CONFIGURED", path: "service" }
+        );
+      }
+      const body = await readJsonBody(req);
+      requireString(body.query, "query");
+      if (!SAFE_QUERY.test(body.query)) {
+        throw new ValidationError("query must contain only A-Za-z0-9_-", {
+          code: "QUESTION_INPUT_INVALID",
+          path: "query"
+        });
+      }
+
+      let title;
+      let text;
+      let sourceUrl = null;
+      let source = "manual";
+      if (typeof body.articleId === "string" && body.articleId.length > 0) {
+        const articles = await articleStore.listByQuery(body.query);
+        const article = articles.find((a) => a.id === body.articleId);
+        if (!article) {
+          throw new ValidationError(`article "${body.articleId}" not found for query "${body.query}"`, {
+            code: "ARTICLE_NOT_FOUND",
+            path: "articleId"
+          });
+        }
+        title = article.title;
+        text = article.text;
+        sourceUrl = article.sourceUrl ?? null;
+        source = article.source;
+      } else {
+        requireString(body.title, "title");
+        requireString(body.text, "text");
+        title = body.title;
+        text = body.text;
+      }
+
+      const { extraction } = await llmService.extractQuestions({
+        query: body.query,
+        title,
+        text
+      });
+
+      const provenance = {
+        query: body.query,
+        source,
+        sourceUrl,
+        sourceTitle: title
+      };
+      const ts = now();
+      const added = [];
+      const duplicates = [];
+      const errors = [];
+
+      for (let i = 0; i < extraction.questions.length; i += 1) {
+        const item = extraction.questions[i];
+        let record;
+        try {
+          record = extractionItemToQuestionRecord(item, provenance, { now: ts });
+        } catch (err) {
+          errors.push({ index: i, error: err.message ?? String(err), code: err.code ?? null });
+          continue;
+        }
+        try {
+          await questionStore.add(record);
+          added.push(record);
+        } catch (err) {
+          if (err?.code === "QUESTION_DUPLICATE_ID") {
+            duplicates.push({ index: i, id: record.id });
+          } else {
+            errors.push({ index: i, error: err.message ?? String(err), code: err.code ?? null });
+          }
+        }
+      }
+
+      sendJson(res, 200, { added, duplicates, errors });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
 }

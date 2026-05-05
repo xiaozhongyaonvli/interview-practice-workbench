@@ -75,9 +75,13 @@
 
               <form data-source-panel="extract" class="source-panel" id="extract-import-form" hidden novalidate>
                 <input name="query" value="mysql" placeholder="方向关键词" aria-label="方向关键词" required>
-                <textarea name="rawResponse" placeholder="粘贴 LLM 抽题 JSON,例如 {&quot;questions&quot;:[...]}" aria-label="抽题 JSON" required></textarea>
+                <textarea name="rawResponse" placeholder="粘贴 LLM 抽题 JSON,例如 {&quot;questions&quot;:[...]}" aria-label="抽题 JSON"></textarea>
                 <p class="source-status" data-source-status hidden></p>
-                <button class="primary full" type="submit">导入到问题池</button>
+                <div class="answer-actions">
+                  <button class="ghost" type="button" data-llm-extract>调用 LLM 抽题</button>
+                  <button class="primary" type="submit">导入到问题池</button>
+                </div>
+                <p class="source-hint">"调用 LLM 抽题" 会用最近一篇该方向的文章触发 DeepSeek;失败时可改用粘贴 JSON。</p>
               </form>
             </div>
 
@@ -156,6 +160,7 @@
               <p class="source-status" data-attempt-status hidden></p>
               <div class="answer-actions">
                 <button type="button" data-save-attempt>保存回答</button>
+                <button type="button" data-llm-score>LLM 评分</button>
                 <button class="primary" type="button" data-toggle-score>粘贴评分 JSON</button>
               </div>
             </div>

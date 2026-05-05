@@ -20,6 +20,8 @@ export function createScoringApi({
   attemptStore,
   scoreStore,
   llmDebugStore,
+  questionStore = null,
+  llmService = null,
   now = nowIso
 }) {
   if (!attemptStore) throw new Error("createScoringApi: attemptStore is required");
@@ -119,5 +121,66 @@ export function createScoringApi({
     }
   }
 
-  return { handleScore };
+  return { handleScore, handleLlmScore };
+
+  /**
+   * POST /api/attempts/:id/llm-score
+   *
+   * Auto-score using the real LLM. Pulls question + attempt + (optional)
+   * context, asks the model, validates the response, and writes the score
+   * record. On failure (non-JSON, missing gap fields, etc.) the raw response
+   * stays in data/llm/scoring_results.jsonl for the user to inspect.
+   */
+  async function handleLlmScore(req, res, attemptId) {
+    try {
+      if (!llmService || !questionStore) {
+        throw new ValidationError(
+          "LLM scoring is not configured (set DEEPSEEK_API_KEY)",
+          { code: "LLM_NOT_CONFIGURED", path: "service" }
+        );
+      }
+      if (!SAFE_ID.test(attemptId)) {
+        throw new ValidationError("attemptId must contain only A-Za-z0-9_-", {
+          code: "SCORE_INPUT_INVALID",
+          path: "attemptId"
+        });
+      }
+
+      const all = await attemptStore.listAll();
+      const attempt = all.find((a) => a.attemptId === attemptId);
+      if (!attempt) {
+        throw new ValidationError(`attempt "${attemptId}" not found`, {
+          code: "ATTEMPT_NOT_FOUND",
+          path: "attemptId"
+        });
+      }
+
+      const questions = await questionStore.list();
+      const question = questions.find((q) => q.id === attempt.questionId);
+      if (!question) {
+        throw new ValidationError(`question "${attempt.questionId}" not found`, {
+          code: "QUESTION_NOT_FOUND",
+          path: "questionId"
+        });
+      }
+
+      const { summary } = await llmService.scoreAnswer({
+        question: question.question,
+        answer: attempt.answer,
+        context: question.evidence ?? ""
+      });
+
+      const record = {
+        attemptId,
+        scoredAt: now(),
+        feedbackPromptVersion: DEFAULT_PROMPT_VERSION,
+        summary,
+        feedback: null
+      };
+      await scoreStore.append(record);
+      sendJson(res, 201, record);
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
 }

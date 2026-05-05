@@ -6,6 +6,7 @@ data/questions/
 data/attempts/
 data/cards/
 data/llm/
+data/scores/
 coverage/
 .env
 .DS_Store

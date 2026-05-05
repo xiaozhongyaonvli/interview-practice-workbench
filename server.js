@@ -9,6 +9,9 @@ import { createScoreStore } from "./src/storage/scoreStore.js";
 import { createCardStore } from "./src/storage/cardStore.js";
 import { createLlmDebugStore } from "./src/storage/llmDebugStore.js";
 import { createNowCoderAdapter } from "./src/sources/nowcoderAdapter.js";
+import { defaultPromptProvider } from "./src/llm/promptProvider.js";
+import { createDeepSeekChat } from "./src/llm/deepSeekClient.js";
+import { createLlmEvaluationService } from "./src/llm/llmEvaluationService.js";
 import { createArticleApi } from "./src/api/articles.js";
 import { createQuestionApi } from "./src/api/questions.js";
 import { createAttemptApi } from "./src/api/attempts.js";
@@ -51,7 +54,11 @@ function resolveStaticPath(pathname) {
  * call to createAppServer gets its own store instances — important for
  * concurrent test runs.
  */
-export function createAppServer({ baseDir = DEFAULT_BASE_DIR, nowCoderAdapter } = {}) {
+export function createAppServer({
+  baseDir = DEFAULT_BASE_DIR,
+  nowCoderAdapter,
+  llmService = null
+} = {}) {
   const articleStore = createArticleStore({ baseDir });
   const questionStore = createQuestionStore({ baseDir });
   const attemptStore = createAttemptStore({ baseDir });
@@ -61,10 +68,36 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR, nowCoderAdapter } 
   // The caller can inject a mock adapter in tests; production uses the real
   // adapter wired to Node's global fetch.
   const nowCoder = nowCoderAdapter ?? createNowCoderAdapter();
+
+  // LLM service is optional. Three intake paths:
+  //   1) caller injects a service (tests)
+  //   2) DEEPSEEK_API_KEY is set in env (production)
+  //   3) neither — routes that need LLM return LLM_NOT_CONFIGURED 400
+  let resolvedLlmService = llmService;
+  if (!resolvedLlmService && process.env.DEEPSEEK_API_KEY) {
+    const chat = createDeepSeekChat({ apiKey: process.env.DEEPSEEK_API_KEY });
+    resolvedLlmService = createLlmEvaluationService({
+      chatComplete: chat,
+      promptProvider: defaultPromptProvider,
+      llmDebugStore
+    });
+  }
+
   const articleApi = createArticleApi({ articleStore });
-  const questionApi = createQuestionApi({ questionStore, llmDebugStore });
+  const questionApi = createQuestionApi({
+    questionStore,
+    llmDebugStore,
+    articleStore,
+    llmService: resolvedLlmService
+  });
   const attemptApi = createAttemptApi({ attemptStore, scoreStore });
-  const scoringApi = createScoringApi({ attemptStore, scoreStore, llmDebugStore });
+  const scoringApi = createScoringApi({
+    attemptStore,
+    scoreStore,
+    llmDebugStore,
+    questionStore,
+    llmService: resolvedLlmService
+  });
   const cardsApi = createCardsApi({ questionStore, attemptStore, scoreStore, cardStore });
   const sourcesApi = createSourcesApi({ nowCoderAdapter: nowCoder, articleStore });
 
@@ -97,6 +130,11 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR, nowCoderAdapter } 
       return;
     }
 
+    if (url.pathname === "/api/questions/extract" && req.method === "POST") {
+      await questionApi.handleExtract(req, res);
+      return;
+    }
+
     if (url.pathname === "/api/questions" && req.method === "GET") {
       await questionApi.handleList(req, res, url);
       return;
@@ -125,6 +163,14 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR, nowCoderAdapter } 
     );
     if (attemptScoreMatch && req.method === "POST") {
       await scoringApi.handleScore(req, res, attemptScoreMatch[1]);
+      return;
+    }
+
+    const attemptLlmScoreMatch = url.pathname.match(
+      /^\/api\/attempts\/([A-Za-z0-9_-]+)\/llm-score$/
+    );
+    if (attemptLlmScoreMatch && req.method === "POST") {
+      await scoringApi.handleLlmScore(req, res, attemptLlmScoreMatch[1]);
       return;
     }
 
@@ -177,8 +223,8 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR, nowCoderAdapter } 
   });
 }
 
-export function startServer({ port = 8000, host = "127.0.0.1", baseDir = DEFAULT_BASE_DIR, nowCoderAdapter } = {}) {
-  const server = createAppServer({ baseDir, nowCoderAdapter });
+export function startServer({ port = 8000, host = "127.0.0.1", baseDir = DEFAULT_BASE_DIR, nowCoderAdapter, llmService } = {}) {
+  const server = createAppServer({ baseDir, nowCoderAdapter, llmService });
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);
