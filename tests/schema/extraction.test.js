@@ -52,6 +52,28 @@ test("rejects an extraction whose questions array is empty", () => {
   );
 });
 
+test("accepts an empty questions array when the model explicitly says it is not an interview article", () => {
+  assert.doesNotThrow(() =>
+    validateExtractionResult({ isInterview: false, questions: [] })
+  );
+});
+
+test("rejects questions when isInterview is false", () => {
+  assert.throws(
+    () =>
+      validateExtractionResult({
+        isInterview: false,
+        questions: [
+          { question: "Q?", category: "MySQL", difficulty: "medium", confidence: 0.7 }
+        ]
+      }),
+    (err) => {
+      assert.equal(err.path, "questions");
+      return true;
+    }
+  );
+});
+
 test("rejects an item missing the question field", () => {
   const bad = {
     questions: [{ category: "MySQL", difficulty: "medium", confidence: 0.7 }]

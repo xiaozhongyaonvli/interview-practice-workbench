@@ -2,9 +2,9 @@
 //
 // Verifies:
 // - the nowcoder tab reveals a fetch form
-// - successful fetch shows "saved N / failed M" status
+// - successful fetch shows the direct-to-question-pool status
 // - when fetch fails the user can switch to the manual tab and still
-//   save an article — CEO review's red line "抓取失败不影响手动链路"
+//   save an article, preserving the manual rescue path
 
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -55,7 +55,7 @@ function createSim({ nowCoderResponse }) {
       if (nowCoderResponse.status >= 400) {
         return ok(nowCoderResponse.body, nowCoderResponse.status);
       }
-      for (const a of nowCoderResponse.body.saved) {
+      for (const a of nowCoderResponse.body.savedArticles ?? nowCoderResponse.body.saved ?? []) {
         articles.push(a);
       }
       return ok(nowCoderResponse.body);
@@ -78,7 +78,7 @@ test("clicking the 牛客 tab reveals the fetch form", async () => {
   assert.equal(document.querySelector("#nowcoder-fetch-form"), document.getElementById("nowcoder-fetch-form"));
 });
 
-test("successful fetch shows '已保存 N 篇' status", async () => {
+test("successful fetch shows direct question-pool status", async () => {
   const saved = [
     {
       id: "nowcoder-mysql-1",
@@ -93,7 +93,15 @@ test("successful fetch shows '已保存 N 篇' status", async () => {
   const sim = createSim({
     nowCoderResponse: {
       status: 200,
-      body: { saved, failed: [], discovered: 1, searchUrl: "url" }
+      body: {
+        savedArticles: saved,
+        savedQuestions: [{ id: "mysql-q1" }],
+        failed: [],
+        discovered: 1,
+        classifiedNo: 2,
+        skippedUrls: [],
+        searchUrl: "url"
+      }
     }
   });
   const dom = await buildAppDom({ fetch: sim.fetch });
@@ -105,14 +113,10 @@ test("successful fetch shows '已保存 N 篇' status", async () => {
 
   const status = document.querySelector('[data-source-panel="nowcoder"] [data-source-status]');
   assert.equal(status.dataset.sourceStatusTone, "ok");
-  assert.match(status.textContent, /已保存 1 篇/);
-
-  // Sidebar imported list reflects the saved article (manual panel's query
-  // defaults to mysql, and the stub GET returns articles for that query).
-  const titles = Array.from(
-    document.querySelectorAll("[data-imported-list] strong")
-  ).map((el) => el.textContent);
-  assert.ok(titles.some((t) => /字节二面/.test(t)));
+  assert.match(status.textContent, /已新增 1 个问题/);
+  assert.match(status.textContent, /抓 1 篇/);
+  assert.match(status.textContent, /非面经 2/);
+  assert.equal(document.querySelector("[data-imported-list]"), null);
 });
 
 test("fetch failure leaves the user free to use the manual paste tab", async () => {
@@ -135,7 +139,7 @@ test("fetch failure leaves the user free to use the manual paste tab", async () 
   assert.equal(failStatus.dataset.sourceStatusTone, "error");
   assert.match(failStatus.textContent, /抓取失败/);
 
-  // 2. user switches to manual tab and saves an article — the rescue path
+  // 2. user switches to manual tab and saves an article, the rescue path
   document.querySelector('[data-source-tab="manual"]').click();
   const manualForm = document.getElementById("manual-import-form");
   manualForm.querySelector("[name=query]").value = "mysql";

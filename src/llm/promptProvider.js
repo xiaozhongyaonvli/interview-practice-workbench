@@ -50,6 +50,13 @@ export function createPromptProvider({ basePath = promptsDir } = {}) {
     async scoringPrompt({ question, answer, context = "" }) {
       const tpl = await load("interview_coach_v2.md");
       return renderTemplate(tpl, { question, answer, context });
+    },
+    async interviewClassifyPrompt({ titles }) {
+      const tpl = await load("interview_classify.md");
+      const list = (Array.isArray(titles) ? titles : [])
+        .map((t, i) => `${i}. ${String(t ?? "").replace(/\s+/g, " ").trim()}`)
+        .join("\n");
+      return renderTemplate(tpl, { titles: list });
     }
   };
 }
@@ -62,5 +69,12 @@ export const defaultPromptProvider = {
   async scoringPrompt({ question, answer, context = "" }) {
     const tpl = await loadTemplate("interview_coach_v2.md");
     return renderTemplate(tpl, { question, answer, context });
+  },
+  async interviewClassifyPrompt({ titles }) {
+    const tpl = await loadTemplate("interview_classify.md");
+    const list = (Array.isArray(titles) ? titles : [])
+      .map((t, i) => `${i}. ${String(t ?? "").replace(/\s+/g, " ").trim()}`)
+      .join("\n");
+    return renderTemplate(tpl, { titles: list });
   }
 };

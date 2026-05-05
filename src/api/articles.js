@@ -11,7 +11,12 @@
 import { ValidationError } from "../domain/errors.js";
 import { readJsonBody, sendJson, sendError } from "./http.js";
 
-const SAFE_QUERY = /^[A-Za-z0-9_-]{1,64}$/;
+// Query input validation is relaxed to accept any sequence of Unicode
+// letters/digits/underscore/hyphen (so "mysql", "面经", "计网" all pass).
+// It still rejects path separators, shell metacharacters, whitespace, etc.
+// Storage-layer safeQueryName handles the filesystem mapping, so a broader
+// input alphabet here does not widen any attack surface.
+const SAFE_QUERY = /^[\p{L}\p{N}_-]{1,64}$/u;
 
 function nowIso() {
   return new Date().toISOString();

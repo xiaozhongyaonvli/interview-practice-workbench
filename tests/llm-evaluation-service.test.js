@@ -22,6 +22,9 @@ const fakePromptProvider = {
   },
   async scoringPrompt({ question, answer }) {
     return `SCORE prompt q=${question.slice(0, 5)} a=${answer.length}`;
+  },
+  async interviewClassifyPrompt({ titles }) {
+    return `CLASSIFY prompt count=${titles.length}`;
   }
 };
 
@@ -86,6 +89,27 @@ test("extractQuestions returns parsed extraction on a clean LLM reply", async ()
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("extractQuestions accepts explicit non-interview extraction with zero questions", async () => {
+  const { dir, store } = await makeStore();
+  try {
+    const svc = createLlmEvaluationService({
+      chatComplete: async () => JSON.stringify({ isInterview: false, questions: [] }),
+      promptProvider: fakePromptProvider,
+      llmDebugStore: store
+    });
+    const { extraction } = await svc.extractQuestions({
+      query: "mysql",
+      title: "求建议",
+      text: "求规划"
+    });
+    assert.equal(extraction.isInterview, false);
+    assert.deepEqual(extraction.questions, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 
 test("extractQuestions handles ```json``` fenced reply", async () => {
   const { dir, store } = await makeStore();
@@ -222,6 +246,116 @@ test("scoreAnswer rejects non-JSON reply and persists raw", async () => {
     );
     const log = await store.readPhase("scoring");
     assert.match(log[0].rawResponse, /can't comply/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("classifyInterviewTitles returns flags aligned with titles on a clean reply", async () => {
+  const { dir, store } = await makeStore();
+  try {
+    const chat = async () =>
+      JSON.stringify([
+        { index: 0, isInterview: true },
+        { index: 1, isInterview: false },
+        { index: 2, isInterview: true }
+      ]);
+    const svc = createLlmEvaluationService({
+      chatComplete: chat,
+      promptProvider: fakePromptProvider,
+      llmDebugStore: store
+    });
+    const out = await svc.classifyInterviewTitles({
+      titles: ["字节二面 MySQL 面经", "求帮看一份内推", "美团 SQL 笔面经"]
+    });
+    assert.deepEqual(out.flags, [true, false, true]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("classifyInterviewTitles short-circuits empty titles", async () => {
+  const { dir, store } = await makeStore();
+  try {
+    let called = false;
+    const chat = async () => {
+      called = true;
+      return "[]";
+    };
+    const svc = createLlmEvaluationService({
+      chatComplete: chat,
+      promptProvider: fakePromptProvider,
+      llmDebugStore: store
+    });
+    const out = await svc.classifyInterviewTitles({ titles: [] });
+    assert.deepEqual(out.flags, []);
+    assert.equal(called, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("classifyInterviewTitles persists raw and throws CLASSIFY_NOT_JSON on garbage", async () => {
+  const { dir, store } = await makeStore();
+  try {
+    const chat = async () => "I cannot answer in JSON.";
+    const svc = createLlmEvaluationService({
+      chatComplete: chat,
+      promptProvider: fakePromptProvider,
+      llmDebugStore: store
+    });
+    await assert.rejects(
+      svc.classifyInterviewTitles({ titles: ["a", "b"] }),
+      (err) => {
+        assert.ok(err instanceof ValidationError);
+        assert.equal(err.code, "CLASSIFY_NOT_JSON");
+        return true;
+      }
+    );
+    const log = await store.readPhase("classify");
+    assert.equal(log.length, 1);
+    assert.equal(log[0].error.code, "CLASSIFY_NOT_JSON");
+    assert.match(log[0].rawResponse, /cannot answer/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("classifyInterviewTitles logs CLASSIFY_LENGTH_MISMATCH but defaults missing rows to true", async () => {
+  const { dir, store } = await makeStore();
+  try {
+    const chat = async () => JSON.stringify([{ index: 0, isInterview: true }]);
+    const svc = createLlmEvaluationService({
+      chatComplete: chat,
+      promptProvider: fakePromptProvider,
+      llmDebugStore: store
+    });
+    const out = await svc.classifyInterviewTitles({ titles: ["a", "b", "c"] });
+    assert.deepEqual(out.flags, [true, true, true]);
+    const log = await store.readPhase("classify");
+    assert.equal(log[0].error.code, "CLASSIFY_LENGTH_MISMATCH");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("classifyInterviewTitles tolerates ```json``` fences", async () => {
+  const { dir, store } = await makeStore();
+  try {
+    const chat = async () =>
+      "```json\n" +
+      JSON.stringify([
+        { index: 0, isInterview: false },
+        { index: 1, isInterview: true }
+      ]) +
+      "\n```";
+    const svc = createLlmEvaluationService({
+      chatComplete: chat,
+      promptProvider: fakePromptProvider,
+      llmDebugStore: store
+    });
+    const out = await svc.classifyInterviewTitles({ titles: ["x", "y"] });
+    assert.deepEqual(out.flags, [false, true]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

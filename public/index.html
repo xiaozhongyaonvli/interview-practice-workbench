@@ -67,11 +67,11 @@
               </form>
 
               <form data-source-panel="nowcoder" class="source-panel" id="nowcoder-fetch-form" hidden novalidate>
-                <input name="query" value="mysql" placeholder="方向关键词" aria-label="方向关键词" required>
+                <input name="query" value="" placeholder="留空获取最新面经,或输入方向(如 mysql)" aria-label="方向关键词">
                 <input name="maxArticles" value="3" type="number" min="1" max="20" aria-label="抓取篇数">
                 <p class="source-status" data-source-status hidden></p>
                 <button class="primary full" type="submit">抓取面经</button>
-                <p class="source-hint" data-nowcoder-hint>抓取失败时可切换到"手动粘贴"继续训练。</p>
+                <p class="source-hint" data-nowcoder-hint>抓取后会自动判断是否面经并抽题,只展示问题。失败时可切换到"手动粘贴"。</p>
               </form>
 
               <form data-source-panel="extract" class="source-panel" id="extract-import-form" hidden novalidate>
@@ -79,29 +79,10 @@
                 <textarea name="rawResponse" placeholder="粘贴 LLM 抽题 JSON,例如 {&quot;questions&quot;:[...]}" aria-label="抽题 JSON"></textarea>
                 <p class="source-status" data-source-status hidden></p>
                 <div class="answer-actions">
-                  <button class="ghost" type="button" data-llm-extract>调用 LLM 抽题</button>
                   <button class="primary" type="submit">导入到问题池</button>
                 </div>
-                <p class="source-hint">"调用 LLM 抽题" 会用最近一篇该方向的文章触发 DeepSeek;失败时可改用粘贴 JSON。</p>
+                <p class="source-hint">兜底入口: 当自动抽题失败时,可手动粘贴 JSON 把问题导入。</p>
               </form>
-            </div>
-
-            <div class="imported-articles" id="imported-articles">
-              <h4>最近导入</h4>
-              <ul data-imported-list>
-                <li class="imported-empty">还没有导入的文章</li>
-              </ul>
-              <article class="article-preview" data-article-preview hidden>
-                <header>
-                  <strong data-article-preview-title>—</strong>
-                  <button class="ghost" type="button" data-article-preview-close aria-label="关闭预览">×</button>
-                </header>
-                <p class="article-preview-meta" data-article-preview-meta></p>
-                <a class="article-preview-link" data-article-preview-link target="_blank" rel="noopener" hidden>查看牛客原文</a>
-                <pre class="article-preview-body" data-article-preview-body></pre>
-                <p class="source-status" data-article-preview-status hidden></p>
-                <button class="primary full" type="button" data-article-preview-extract>用此文章调用 LLM 抽题</button>
-              </article>
             </div>
           </aside>
 

@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createNowCoderAdapter } from "../src/sources/nowcoderAdapter.js";
+import { createNowCoderAdapter, DEFAULT_FEED_URL } from "../src/sources/nowcoderAdapter.js";
 import { ValidationError } from "../src/domain/errors.js";
 
 function mockFetchByUrl(mapping) {
@@ -81,6 +81,20 @@ test("rejects an unsafe query string", async () => {
   );
 });
 
+test("empty query uses the fresh interview-experience feed by default", () => {
+  const adapter = createNowCoderAdapter({ httpFetch: async () => ({ status: 200, text: "" }) });
+  assert.equal(adapter._internals.entryUrlFor(""), DEFAULT_FEED_URL);
+});
+
+test("empty query feed URL can be overridden for a different job track", () => {
+  const feedUrl = "https://www.nowcoder.com/discuss/experience?tagId=backend";
+  const adapter = createNowCoderAdapter({
+    feedUrl,
+    httpFetch: async () => ({ status: 200, text: "" })
+  });
+  assert.equal(adapter._internals.entryUrlFor(""), feedUrl);
+});
+
 test("rejects a search-page HTTP failure with a visible error", async () => {
   const httpFetch = async () => ({ status: 500, text: "server error" });
   const adapter = createNowCoderAdapter({ httpFetch });
@@ -151,7 +165,7 @@ test("toArticleRecord strips script/style and preserves title", async () => {
       "<script>bad()</script><p>问题 1: ACID</p>" +
       "<style>.x{color:red}</style>" +
       "</body></html>",
-    query: "mysql"
+    storedQuery: "mysql"
   });
   assert.equal(record.source, "nowcoder");
   assert.equal(record.title, "字节 MySQL 面经");
@@ -160,17 +174,73 @@ test("toArticleRecord strips script/style and preserves title", async () => {
   assert.doesNotMatch(record.text, /color:red/);
 });
 
-test("discoverArticleLinks deduplicates trailing query strings", () => {
+test("toArticleRecord prefers detail page title over listing preview text", () => {
+  const adapter = createNowCoderAdapter({
+    httpFetch: async () => ({ status: 200, text: "" }),
+    now: () => "T"
+  });
+  const record = adapter._internals.toArticleRecord({
+    url: "https://www.nowcoder.com/feed/main/detail/abc",
+    html:
+      "<html><head><meta property=\"og:title\" content=\"字节后端开发一面面经_牛客网\"></head>" +
+      "<body>正文 问了 Redis 和 MySQL。</body></html>",
+    storedQuery: "__feed__",
+    classifierTitle: "一面 1.volatile原理2.ThreadLocal原理3.Mysql中的事务隔离级别4.可重复读和读已提交区别"
+  });
+  assert.equal(record.title, "字节后端开发一面面经");
+});
+
+test("discoverArticleCandidates deduplicates trailing query strings", () => {
   const adapter = createNowCoderAdapter({ httpFetch: async () => ({ status: 200, text: "" }) });
-  const links = adapter._internals.discoverArticleLinks(
+  const candidates = adapter._internals.discoverArticleCandidates(
     `<a href="/discuss/1?ref=a">x</a>
      <a href="/discuss/1?ref=b">y</a>
      <a href="/discuss/2#top">z</a>`,
     "https://www.nowcoder.com/search"
   );
+  const links = candidates.map((c) => c.url);
   assert.equal(links.length, 2);
   assert.ok(links.includes("https://www.nowcoder.com/discuss/1"));
   assert.ok(links.includes("https://www.nowcoder.com/discuss/2"));
+  assert.deepEqual(
+    candidates.map((c) => c.title),
+    ["x", "z"]
+  );
+});
+
+test("discoverArticleCandidates trims long feed previews into short titles", () => {
+  const adapter = createNowCoderAdapter({ httpFetch: async () => ({ status: 200, text: "" }) });
+  const longPreview =
+    "一面 1.volatile原理2.ThreadLocal原理3.Mysql中的事务隔离级别4.可重复读和读已提交区别" +
+    "5.可重复读可以解决幻觉问题吗6.手撕：三数之和二面一、 Agent 项目与大模型相关";
+  const candidates = adapter._internals.discoverArticleCandidates(
+    `<a href="/feed/main/detail/c326baa3dac7472d89066c80b8749bdc">${longPreview}</a>`,
+    "https://www.nowcoder.com/discuss/experience?tagId=639"
+  );
+  assert.equal(candidates.length, 1);
+  assert.ok(candidates[0].title.length <= 83);
+  assert.notEqual(candidates[0].title, longPreview);
+  assert.equal(candidates[0].rawTitle, longPreview);
+});
+
+test("searchAndFetch keeps full listing text in metadata when candidate title was shortened", async () => {
+  const listingText =
+    "一面 1.volatile原理2.ThreadLocal原理3.Mysql中的事务隔离级别4.可重复读和读已提交区别" +
+    "5.可重复读可以解决幻觉问题吗6.手撕：三数之和";
+  const searchHtml = `<a href="/feed/main/detail/abc123">${listingText}</a>`;
+  const articleHtml =
+    "<html><head><title>详情标题</title></head><body>正文 问了 Redis 和 MySQL。</body></html>";
+  const adapter = createNowCoderAdapter({
+    httpFetch: async (url) => {
+      if (url.includes("/discuss/experience")) return { status: 200, text: searchHtml, url };
+      return { status: 200, text: articleHtml, url };
+    }
+  });
+
+  const result = await adapter.searchAndFetch({ query: "", maxArticles: 1 });
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].rawMetadata.listingText, listingText);
+  assert.ok(result.records[0].rawMetadata.listingText.length > result.records[0].title.length);
 });
 
 test("excludeUrls skips already-known links and reports them as `skipped`", async () => {

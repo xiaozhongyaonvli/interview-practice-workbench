@@ -1,281 +1,140 @@
-// E2E for the imported-articles list:
-// - clicking an article opens a preview
-// - the preview's "用此文章调用 LLM 抽题" button hits /api/questions/extract
-// - re-fetching from NowCoder for the same query reports `skipped` and
-//   does not duplicate the entry
+// Feed refactor regression tests:
+// - imported article list and article preview UI are intentionally gone
+// - NowCoder fetch updates the question pool directly
+// - duplicate/skipped URLs are reported in the source status
 
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAppDom, flushDom } from "../helpers/buildAppDom.js";
 
-function buildSim({ articles = [], extractAdded = [], skipped = [] } = {}) {
+function ok(body, status = 200) {
+  return Promise.resolve({
+    ok: status < 400,
+    status,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body))
+  });
+}
+
+function buildSim({ fetchBody, questionsAfterFetch = [] } = {}) {
   const calls = [];
-  const ok = (b, s = 200) =>
-    Promise.resolve({
-      ok: s < 400,
-      status: s,
-      json: () => Promise.resolve(b),
-      text: () => Promise.resolve(JSON.stringify(b))
-    });
+  let fetched = false;
 
   function fetch(url, options = {}) {
     const method = (options.method ?? "GET").toUpperCase();
     calls.push({ method, url: String(url), body: options.body ?? null });
     const parsed = new URL(String(url), "http://127.0.0.1/");
 
-    if (parsed.pathname === "/api/articles" && method === "GET") {
-      const q = parsed.searchParams.get("query");
-      return ok({ articles: articles.filter((a) => a.query === q) });
-    }
     if (parsed.pathname === "/api/questions" && method === "GET") {
       return ok({
-        questions: [],
-        meta: { total: 0, filtered: 0, categories: [], statuses: [] }
+        questions: fetched ? questionsAfterFetch : [],
+        meta: { total: fetched ? questionsAfterFetch.length : 0 }
       });
     }
-    if (parsed.pathname === "/api/questions/extract" && method === "POST") {
-      const body = JSON.parse(options.body ?? "{}");
-      // Echo the articleId in the response so tests can verify which
-      // article was used.
-      return ok({
-        added: extractAdded.map((q) => ({ ...q, query: body.query })),
-        duplicates: [],
-        errors: [],
-        usedArticleId: body.articleId ?? null
-      });
+    if (parsed.pathname === "/api/attempts" && method === "GET") {
+      return ok({ attempts: [] });
     }
     if (parsed.pathname === "/api/sources/nowcoder/fetch" && method === "POST") {
-      // Pretend the server already deduped against the store and reports
-      // skipped URLs.
-      return ok({
-        searchUrl: "url",
-        discovered: skipped.length,
-        saved: [],
-        skipped,
-        failed: []
-      });
+      fetched = true;
+      return ok(
+        fetchBody ?? {
+          mode: "search",
+          discovered: 1,
+          savedArticles: [],
+          savedQuestions: [],
+          skippedUrls: [],
+          failed: [],
+          classifiedNo: 0,
+          prunedArticles: 0
+        }
+      );
     }
     return ok({ error: "not found" }, 404);
   }
-  return { fetch, articles, calls };
+
+  return { fetch, calls };
 }
 
-const sampleNowCoderArticle = {
-  id: "nowcoder-mysql-001",
-  source: "nowcoder",
-  sourceUrl: "https://www.nowcoder.com/discuss/123",
-  query: "mysql",
-  title: "字节二面 MySQL 面经",
-  text: "面试官问了 InnoDB 的 ACID...",
-  fetchedAt: "2026-05-05T10:00:00Z"
-};
-
-const sampleManualArticle = {
-  id: "manual-mysql-002",
-  source: "manual",
-  query: "mysql",
-  title: "手动粘贴的 MySQL 面经",
-  text: "面试官:索引失效有哪些情况?\n候选人:...",
-  fetchedAt: "2026-05-05T11:00:00Z"
-};
-
-test("clicking an imported article opens the preview with title + meta + body", async () => {
-  const sim = buildSim({ articles: [sampleNowCoderArticle, sampleManualArticle] });
+test("article list and article preview UI are not present", async () => {
+  const sim = buildSim();
   const dom = await buildAppDom({ fetch: sim.fetch });
-  await flushDom(dom, 6);
   const { document } = dom.window;
 
-  // Both items rendered.
-  const items = document.querySelectorAll(
-    "[data-imported-list] li[data-imported-id]"
-  );
-  assert.equal(items.length, 2);
-
-  // Click the nowcoder one (first in newest-first order).
-  const target = Array.from(items).find(
-    (li) => li.dataset.importedId === sampleNowCoderArticle.id
-  );
-  target.click();
-  await flushDom(dom, 4);
-
-  const panel = document.querySelector("[data-article-preview]");
-  assert.equal(panel.hidden, false, "preview panel becomes visible");
-  assert.match(
-    document.querySelector("[data-article-preview-title]").textContent,
-    /字节二面 MySQL 面经/
-  );
-  assert.match(
-    document.querySelector("[data-article-preview-meta]").textContent,
-    /牛客抓取/
-  );
-  const link = document.querySelector("[data-article-preview-link]");
-  assert.equal(link.hidden, false);
-  assert.equal(link.getAttribute("href"), sampleNowCoderArticle.sourceUrl);
-  assert.match(
-    document.querySelector("[data-article-preview-body]").textContent,
-    /InnoDB/
-  );
-  // The clicked li is highlighted.
-  assert.equal(target.classList.contains("active"), true);
+  assert.equal(document.querySelector("[data-imported-list]"), null);
+  assert.equal(document.querySelector("[data-article-preview]"), null);
+  assert.equal(document.querySelector("[data-article-modal]"), null);
+  assert.equal(document.querySelector("[data-article-preview-extract]"), null);
 });
 
-test("manual articles open in the preview without the 牛客原文 link", async () => {
-  const sim = buildSim({ articles: [sampleManualArticle] });
-  const dom = await buildAppDom({ fetch: sim.fetch });
-  await flushDom(dom, 6);
-  const { document } = dom.window;
-
-  document
-    .querySelector(`[data-imported-list] li[data-imported-id="${sampleManualArticle.id}"]`)
-    .click();
-  await flushDom(dom, 4);
-
-  assert.equal(document.querySelector("[data-article-preview]").hidden, false);
-  assert.equal(
-    document.querySelector("[data-article-preview-link]").hidden,
-    true,
-    "manual articles without sourceUrl have no link"
-  );
-});
-
-test('"用此文章调用 LLM 抽题" POSTs /api/questions/extract with the article id', async () => {
+test("nowcoder fetch refreshes the question pool directly", async () => {
   const sim = buildSim({
-    articles: [sampleNowCoderArticle],
-    extractAdded: [
+    fetchBody: {
+      mode: "search",
+      discovered: 1,
+      savedArticles: [{ id: "a1" }],
+      savedQuestions: [{ id: "mysql-q1" }],
+      skippedUrls: [],
+      failed: [],
+      classifiedNo: 0,
+      prunedArticles: 0
+    },
+    questionsAfterFetch: [
       {
         id: "mysql-q1",
-        question: "线上慢 SQL 怎么排查?",
+        question: "MySQL index invalidation cases?",
         category: "MySQL",
+        tags: ["MySQL"],
         difficulty: "medium",
-        confidence: 0.86,
-        evidence: "evidence",
+        confidence: 0.9,
+        source: "nowcoder",
+        evidence: "index invalidation",
         status: "candidate"
       }
     ]
   });
   const dom = await buildAppDom({ fetch: sim.fetch });
-  await flushDom(dom, 6);
-  const { document } = dom.window;
-
-  document
-    .querySelector(`[data-imported-list] li[data-imported-id="${sampleNowCoderArticle.id}"]`)
-    .click();
-  await flushDom(dom, 4);
-  document.querySelector("[data-article-preview-extract]").click();
-  await flushDom(dom, 8);
-
-  const extractPosts = sim.calls.filter(
-    (c) => c.method === "POST" && c.url === "/api/questions/extract"
-  );
-  assert.equal(extractPosts.length, 1);
-  const sent = JSON.parse(extractPosts[0].body);
-  assert.equal(sent.articleId, sampleNowCoderArticle.id);
-  assert.equal(sent.query, "mysql");
-
-  const status = document.querySelector("[data-article-preview-status]");
-  assert.equal(status.dataset.sourceStatusTone, "ok");
-  assert.match(status.textContent, /已抽 1 条/);
-});
-
-test('extract failure shows "可改用 \\"导入抽题\\" 粘贴 JSON" hint', async () => {
-  const dom = await buildAppDom({
-    fetch: (url, options = {}) => {
-      const method = (options.method ?? "GET").toUpperCase();
-      const parsed = new URL(String(url), "http://127.0.0.1/");
-      if (parsed.pathname === "/api/articles" && method === "GET") {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve({ articles: [sampleNowCoderArticle] }),
-          text: () => Promise.resolve("")
-        });
-      }
-      if (parsed.pathname === "/api/questions" && method === "GET") {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () =>
-            Promise.resolve({
-              questions: [],
-              meta: { total: 0, filtered: 0, categories: [], statuses: [] }
-            }),
-          text: () => Promise.resolve("")
-        });
-      }
-      if (parsed.pathname === "/api/questions/extract" && method === "POST") {
-        return Promise.resolve({
-          ok: false,
-          status: 400,
-          json: () =>
-            Promise.resolve({
-              error: "LLM_NOT_CONFIGURED",
-              code: "LLM_NOT_CONFIGURED",
-              path: "service"
-            }),
-          text: () => Promise.resolve("")
-        });
-      }
-      return Promise.resolve({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve("")
-      });
-    }
-  });
-  await flushDom(dom, 6);
-  const { document } = dom.window;
-
-  document
-    .querySelector(`[data-imported-list] li[data-imported-id="${sampleNowCoderArticle.id}"]`)
-    .click();
-  await flushDom(dom, 4);
-  document.querySelector("[data-article-preview-extract]").click();
-  await flushDom(dom, 6);
-
-  const status = document.querySelector("[data-article-preview-status]");
-  assert.equal(status.dataset.sourceStatusTone, "error");
-  assert.match(status.textContent, /可改用/);
-});
-
-test("nowcoder fetch shows '跳过 N 篇旧文章' when the server reports skipped urls", async () => {
-  const sim = buildSim({
-    articles: [sampleNowCoderArticle],
-    skipped: [sampleNowCoderArticle.sourceUrl]
-  });
-  const dom = await buildAppDom({ fetch: sim.fetch });
-  await flushDom(dom, 4);
   const { document } = dom.window;
 
   document.querySelector('[data-source-tab="nowcoder"]').click();
   document.getElementById("nowcoder-fetch-form").requestSubmit();
-  await flushDom(dom, 6);
+  await flushDom(dom, 8);
 
   const status = document.querySelector(
     '[data-source-panel="nowcoder"] [data-source-status]'
   );
-  assert.match(status.textContent, /跳过 1 篇旧文章/);
+  assert.equal(status.dataset.sourceStatusTone, "ok");
+  assert.match(status.textContent, /已新增 1 个问题/);
+  assert.match(status.textContent, /抓 1 篇/);
+
+  const cards = Array.from(document.querySelectorAll("[data-question-id] h4")).map(
+    (node) => node.textContent
+  );
+  assert.deepEqual(cards, ["MySQL index invalidation cases?"]);
 });
 
-test("clicking the X close button hides the preview and clears highlight", async () => {
-  const sim = buildSim({ articles: [sampleNowCoderArticle] });
+test("nowcoder fetch reports skipped URLs without rendering articles", async () => {
+  const sim = buildSim({
+    fetchBody: {
+      mode: "search",
+      discovered: 1,
+      savedArticles: [],
+      savedQuestions: [],
+      skippedUrls: ["https://www.nowcoder.com/discuss/1"],
+      failed: [],
+      classifiedNo: 0,
+      prunedArticles: 0
+    }
+  });
   const dom = await buildAppDom({ fetch: sim.fetch });
-  await flushDom(dom, 6);
   const { document } = dom.window;
 
-  document
-    .querySelector(`[data-imported-list] li[data-imported-id="${sampleNowCoderArticle.id}"]`)
-    .click();
-  await flushDom(dom, 4);
-  assert.equal(document.querySelector("[data-article-preview]").hidden, false);
+  document.querySelector('[data-source-tab="nowcoder"]').click();
+  document.getElementById("nowcoder-fetch-form").requestSubmit();
+  await flushDom(dom, 8);
 
-  document.querySelector("[data-article-preview-close]").click();
-  assert.equal(document.querySelector("[data-article-preview]").hidden, true);
-  // Highlight cleared.
-  assert.equal(
-    document
-      .querySelector(`[data-imported-list] li[data-imported-id="${sampleNowCoderArticle.id}"]`)
-      .classList.contains("active"),
-    false
+  const status = document.querySelector(
+    '[data-source-panel="nowcoder"] [data-source-status]'
   );
+  assert.match(status.textContent, /跳过旧链接 1/);
+  assert.equal(document.querySelector("[data-imported-list]"), null);
 });

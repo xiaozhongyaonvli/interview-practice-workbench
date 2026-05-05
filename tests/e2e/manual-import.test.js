@@ -95,7 +95,7 @@ test("clicking the 牛客 tab swaps panel visibility", async () => {
   assert.equal(document.querySelector('[data-source-panel="nowcoder"]').hidden, false);
 });
 
-test("submitting a manual article saves it and renders it in the imported list", async () => {
+test("submitting a manual article saves it without rendering an imported article list", async () => {
   const sim = createApiSim();
   const dom = await buildAppDom({ fetch: sim.fetch });
   const { document } = dom.window;
@@ -117,11 +117,10 @@ test("submitting a manual article saves it and renders it in the imported list",
   assert.equal(sim.store.length, 1);
   assert.equal(sim.store[0].title, "粘贴的一段 MySQL 面经");
 
-  // List was refreshed after save and the new article shows up.
-  const list = document.querySelector("[data-imported-list]");
-  assert.ok(list);
-  const titles = Array.from(list.querySelectorAll("strong")).map((el) => el.textContent);
-  assert.deepEqual(titles, ["粘贴的一段 MySQL 面经"]);
+  // Phase A feed refactor removed the imported-article UI; saving a manual
+  // article is now only a source intake/rescue path.
+  assert.equal(document.querySelector("[data-imported-list]"), null);
+  assert.equal(document.querySelector("[data-article-preview]"), null);
 
   // Status banner reflects success.
   const status = document.querySelector("[data-source-status]");

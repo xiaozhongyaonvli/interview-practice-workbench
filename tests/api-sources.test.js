@@ -68,6 +68,10 @@ test("POST /api/sources/nowcoder/fetch saves fetched articles and returns a summ
       assert.equal(body.saved.length, 2);
       assert.equal(body.failed.length, 0);
       assert.equal(body.discovered, 2);
+      assert.equal(body.diagnostics.llmConfigured, false);
+      assert.equal(body.diagnostics.extractionSkippedReason, "LLM_NOT_CONFIGURED");
+      assert.equal(body.diagnostics.extractionAttempted, 0);
+      assert.equal(body.diagnostics.articleTextStats.length, 2);
       for (const a of body.saved) {
         assert.equal(a.source, "nowcoder");
         assert.equal(a.query, "mysql");
@@ -80,6 +84,73 @@ test("POST /api/sources/nowcoder/fetch saves fetched articles and returns a summ
       ).json();
       assert.equal(list.articles.length, 2);
     }, { baseDir, nowCoderAdapter: adapter });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/sources/nowcoder/fetch reports extraction diagnostics when LLM is wired", async () => {
+  const baseDir = await makeBase();
+  try {
+    const adapter = mockAdapter({
+      searchUrl: "url",
+      links: ["https://www.nowcoder.com/discuss/1", "https://www.nowcoder.com/discuss/2"],
+      records: [
+        {
+          source: "nowcoder",
+          sourceUrl: "https://www.nowcoder.com/discuss/1",
+          query: "mysql",
+          title: "MySQL 面经",
+          text: "问了慢 SQL 怎么排查?",
+          fetchedAt: "2026-05-05T10:00:00Z",
+          rawMetadata: { interviewKeywords: ["面经"] }
+        },
+        {
+          source: "nowcoder",
+          sourceUrl: "https://www.nowcoder.com/discuss/2",
+          query: "mysql",
+          title: "求建议",
+          text: "这是求建议帖子",
+          fetchedAt: "2026-05-05T10:00:00Z",
+          rawMetadata: { interviewKeywords: [] }
+        }
+      ]
+    });
+    const llmService = {
+      classifyInterviewTitles: async () => ({ flags: [true, true], raw: "[]" }),
+      extractQuestions: async ({ title }) => {
+        if (title === "求建议") return { extraction: { isInterview: false, questions: [] } };
+        return {
+          extraction: {
+            questions: [
+              {
+                question: "慢 SQL 怎么排查?",
+                category: "MySQL",
+                difficulty: "medium",
+                confidence: 0.9
+              }
+            ]
+          }
+        };
+      }
+    };
+
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sources/nowcoder/fetch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "mysql" })
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.savedArticles.length, 2);
+      assert.equal(body.savedQuestions.length, 1);
+      assert.equal(body.diagnostics.llmConfigured, true);
+      assert.equal(body.diagnostics.extractionAttempted, 2);
+      assert.equal(body.diagnostics.extractionSucceededArticles, 1);
+      assert.equal(body.diagnostics.extractionNoQuestions, 1);
+      assert.equal(body.diagnostics.extractionFailed, 0);
+    }, { baseDir, nowCoderAdapter: adapter, llmService });
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

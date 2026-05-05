@@ -13,7 +13,9 @@ import { QUESTION_STATUSES } from "../domain/question.js";
 import { ALLOWED_CATEGORIES } from "../domain/categories.js";
 import { readJsonBody, sendJson, sendError } from "./http.js";
 
-const SAFE_QUERY = /^[A-Za-z0-9_-]{1,64}$/;
+// SAFE_QUERY accepts Unicode letters/digits (so 面经 / 计网 / mysql all pass)
+// while still rejecting path separators, shell metachars, and whitespace.
+const SAFE_QUERY = /^[\p{L}\p{N}_-]{1,64}$/u;
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
 function requireString(value, field, code = "QUESTION_INPUT_INVALID") {

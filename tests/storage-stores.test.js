@@ -73,6 +73,101 @@ test("articleStore: refuses an invalid record before touching disk", async () =>
   }
 });
 
+test("articleStore.pruneOlderThan: drops nowcoder rows older than the TTL", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createArticleStore({ baseDir });
+    const now = Date.now();
+    const oldIso = new Date(now - 20 * 86400000).toISOString();
+    const freshIso = new Date(now - 2 * 86400000).toISOString();
+    await store.append({
+      id: "nc-old", source: "nowcoder", sourceUrl: "https://www.nowcoder.com/discuss/1",
+      query: "mysql", title: "old", text: "old", fetchedAt: oldIso
+    });
+    await store.append({
+      id: "nc-fresh", source: "nowcoder", sourceUrl: "https://www.nowcoder.com/discuss/2",
+      query: "mysql", title: "fresh", text: "fresh", fetchedAt: freshIso
+    });
+
+    const result = await store.pruneOlderThan({ days: 14, source: "nowcoder" });
+    assert.equal(result.removedCount, 1);
+    assert.equal(result.keptCount, 1);
+
+    const list = await store.listByQuery("mysql");
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, "nc-fresh");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("articleStore.pruneOlderThan: leaves manual records untouched even when ancient", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createArticleStore({ baseDir });
+    const ancientIso = new Date(Date.now() - 365 * 86400000).toISOString();
+    await store.append({
+      id: "manual-old", source: "manual",
+      query: "mysql", title: "粘贴的", text: "粘贴的内容",
+      fetchedAt: ancientIso
+    });
+
+    const result = await store.pruneOlderThan({ days: 14, source: "nowcoder" });
+    assert.equal(result.removedCount, 0);
+    assert.equal(result.keptCount, 1);
+
+    const list = await store.listByQuery("mysql");
+    assert.equal(list.length, 1);
+    assert.equal(list[0].source, "manual");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("articleStore.pruneOlderThan: returns zero counts when articles dir is missing", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createArticleStore({ baseDir });
+    const result = await store.pruneOlderThan({ days: 14, source: "nowcoder" });
+    assert.deepEqual(result, { removedCount: 0, keptCount: 0 });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("articleStore.pruneOlderThan: rejects bad arguments", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createArticleStore({ baseDir });
+    await assert.rejects(store.pruneOlderThan({ days: 0, source: "nowcoder" }), StorageError);
+    await assert.rejects(store.pruneOlderThan({ days: 14 }), StorageError);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("articleStore.pruneOlderThan: keeps __feed__ records like any other query", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createArticleStore({ baseDir });
+    const freshIso = new Date(Date.now() - 1 * 86400000).toISOString();
+    await store.append({
+      id: "nc-feed-1", source: "nowcoder", sourceUrl: "https://www.nowcoder.com/discuss/9",
+      query: "__feed__", title: "feed item", text: "feed body", fetchedAt: freshIso
+    });
+
+    const result = await store.pruneOlderThan({ days: 14, source: "nowcoder" });
+    assert.equal(result.removedCount, 0);
+    assert.equal(result.keptCount, 1);
+
+    const list = await store.listByQuery("__feed__");
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, "nc-feed-1");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
 const questionSample = Object.freeze({
   id: "mysql-slow-sql",
   question: "慢 SQL 怎么排查?",

@@ -4,9 +4,8 @@
 //
 // Why beforeParse: jsdom executes the inlined script synchronously while the
 // JSDOM constructor returns, so any window.fetch assignment performed AFTER
-// the constructor is too late — the script's startup code (e.g.
-// refreshImportedList) has already called fetch and failed. beforeParse runs
-// before HTML parsing, so we can install the stub on window first.
+// the constructor is too late. beforeParse runs before HTML parsing, so we can
+// install the stub on window first.
 
 import { readFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
@@ -85,8 +84,8 @@ export async function buildAppDom({ fetch: fetchHandler = defaultFetchStub } = {
     }
   });
 
-  // Drain microtasks + one macrotask so the initial refreshImportedList()
-  // promise resolves before the test inspects the DOM.
+  // Drain microtasks + one macrotask so the initial app boot fetches resolve
+  // before the test inspects the DOM.
   for (let i = 0; i < 3; i += 1) {
     await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
   }

@@ -50,6 +50,15 @@ export function validateExtractionResult(parsed) {
   if (!Array.isArray(parsed.questions)) {
     fail("questions", "must be an array", parsed.questions);
   }
+  if (parsed.isInterview !== undefined && typeof parsed.isInterview !== "boolean") {
+    fail("isInterview", "must be a boolean when present", parsed.isInterview);
+  }
+  if (parsed.isInterview === false) {
+    if (parsed.questions.length !== 0) {
+      fail("questions", "must be empty when isInterview is false", parsed.questions);
+    }
+    return parsed;
+  }
   if (parsed.questions.length === 0) {
     fail("questions", "must contain at least one question", parsed.questions);
   }

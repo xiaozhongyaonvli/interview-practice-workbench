@@ -164,174 +164,11 @@ sourceTabs.forEach((tab) => {
 });
 
 // ---------------------------------------------------------------------------
-// Step 2: manual article import + recent-imports list (clickable)
+// Step 2: manual article import (recent-imports list removed in feed refactor)
 // ---------------------------------------------------------------------------
 
 const importForm = document.getElementById("manual-import-form");
 const importStatus = importForm?.querySelector("[data-source-status]");
-
-// Cache of the last fetched articles list, keyed by id, so click handlers
-// can resolve a li to the full ArticleRecord without an extra round trip.
-const articleCache = new Map();
-let activeArticleId = null;
-
-function renderImportedList(articles) {
-  const list = document.querySelector("[data-imported-list]");
-  if (!list) return;
-  articleCache.clear();
-  if (!Array.isArray(articles) || articles.length === 0) {
-    list.innerHTML = '<li class="imported-empty">还没有导入的文章</li>';
-    closeArticlePreview();
-    return;
-  }
-  const recent = articles.slice(-5).reverse();
-  for (const a of recent) articleCache.set(a.id, a);
-
-  list.innerHTML = recent
-    .map((a) => {
-      const title = escapeHtml(a.title ?? "(无标题)");
-      const fetchedAt = escapeHtml(
-        String(a.fetchedAt ?? "").slice(0, 16).replace("T", " ")
-      );
-      const queryLabel = escapeHtml(a.query ?? "");
-      const sourceTag = a.source === "nowcoder" ? "牛客" : "手动";
-      const isActive = activeArticleId === a.id ? "active" : "";
-      return `<li data-imported-id="${escapeHtml(a.id ?? "")}" class="${isActive}">
-        <strong>${title}</strong>
-        <small>${fetchedAt} · ${queryLabel} · ${sourceTag}</small>
-      </li>`;
-    })
-    .join("");
-}
-
-async function refreshImportedList(query) {
-  if (!query) return;
-  try {
-    const response = await fetch(`/api/articles?query=${encodeURIComponent(query)}`);
-    if (!response.ok) {
-      renderImportedList([]);
-      return;
-    }
-    const body = await response.json();
-    renderImportedList(Array.isArray(body.articles) ? body.articles : []);
-  } catch (error) {
-    console.warn("refreshImportedList failed", error);
-  }
-}
-
-// --- Article preview panel ---------------------------------------------------
-
-const previewPanel = document.querySelector("[data-article-preview]");
-const previewTitle = document.querySelector("[data-article-preview-title]");
-const previewMeta = document.querySelector("[data-article-preview-meta]");
-const previewLink = document.querySelector("[data-article-preview-link]");
-const previewBody = document.querySelector("[data-article-preview-body]");
-const previewStatus = document.querySelector("[data-article-preview-status]");
-const previewExtractBtn = document.querySelector("[data-article-preview-extract]");
-const previewCloseBtn = document.querySelector("[data-article-preview-close]");
-
-function closeArticlePreview() {
-  if (!previewPanel) return;
-  previewPanel.hidden = true;
-  activeArticleId = null;
-  setStatus(previewStatus, "", null);
-  document
-    .querySelectorAll("[data-imported-list] li[data-imported-id]")
-    .forEach((li) => li.classList.remove("active"));
-}
-
-function openArticlePreview(article) {
-  if (!previewPanel || !article) return;
-  activeArticleId = article.id ?? null;
-  previewPanel.hidden = false;
-  setStatus(previewStatus, "", null);
-  if (previewTitle) previewTitle.textContent = article.title ?? "(无标题)";
-  if (previewMeta) {
-    const sourceLabel = article.source === "nowcoder" ? "牛客抓取" : "手动粘贴";
-    const fetchedAt = String(article.fetchedAt ?? "").slice(0, 16).replace("T", " ");
-    previewMeta.textContent = `${sourceLabel} · ${article.query ?? ""} · ${fetchedAt}`;
-  }
-  if (previewLink) {
-    if (article.sourceUrl) {
-      previewLink.hidden = false;
-      previewLink.href = article.sourceUrl;
-      previewLink.textContent =
-        article.source === "nowcoder" ? "查看牛客原文" : "查看原文链接";
-    } else {
-      previewLink.hidden = true;
-      previewLink.removeAttribute("href");
-    }
-  }
-  if (previewBody) {
-    const text = String(article.text ?? "");
-    // Truncate very long pastes so the sidebar stays usable; the full text
-    // is still in storage and reachable via the link or another fetch.
-    previewBody.textContent =
-      text.length > 1500 ? text.slice(0, 1500) + "\n…(已截断,完整正文在 data/articles 里)" : text;
-  }
-
-  // Highlight the active li.
-  document
-    .querySelectorAll("[data-imported-list] li[data-imported-id]")
-    .forEach((li) => {
-      li.classList.toggle("active", li.dataset.importedId === article.id);
-    });
-}
-
-document.addEventListener("click", (event) => {
-  const li = event.target.closest?.("[data-imported-list] li[data-imported-id]");
-  if (!li) return;
-  const id = li.dataset.importedId;
-  const article = articleCache.get(id);
-  if (article) openArticlePreview(article);
-});
-
-previewCloseBtn?.addEventListener("click", () => closeArticlePreview());
-
-if (previewExtractBtn) {
-  previewExtractBtn.addEventListener("click", async () => {
-    setStatus(previewStatus, "", null);
-    const article = activeArticleId ? articleCache.get(activeArticleId) : null;
-    if (!article) {
-      setStatus(previewStatus, "请先点击一篇文章", "error");
-      return;
-    }
-    setStatus(previewStatus, "正在调用 LLM 抽题...", "ok");
-    try {
-      const response = await fetch("/api/questions/extract", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          query: article.query,
-          articleId: article.id
-        })
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        const where = body?.path ? ` (${body.path})` : "";
-        setStatus(
-          previewStatus,
-          `LLM 抽题失败: ${body?.error ?? `HTTP ${response.status}`}${where} · 可改用 "导入抽题" 粘贴 JSON`,
-          "error"
-        );
-        return;
-      }
-      setStatus(
-        previewStatus,
-        `已抽 ${body.added.length} 条 · 重复 ${body.duplicates.length}`,
-        body.added.length > 0 ? "ok" : "error"
-      );
-      lastKnownQuery = article.query;
-      await refreshQuestionPool(article.query);
-    } catch (error) {
-      setStatus(
-        previewStatus,
-        `LLM 抽题失败: ${error?.message ?? error} · 可改用 "导入抽题" 粘贴 JSON`,
-        "error"
-      );
-    }
-  });
-}
 
 if (importForm) {
   importForm.addEventListener("submit", async (event) => {
@@ -339,11 +176,10 @@ if (importForm) {
     setStatus(importStatus, "", null);
     const data = new FormData(importForm);
     const payload = {
-      query: String(data.get("query") ?? "").trim(),
+      query: String(data.get("query") ?? "").trim() || "面经",
       title: String(data.get("title") ?? "").trim(),
       text: String(data.get("text") ?? "")
     };
-    if (!payload.query) return setStatus(importStatus, "方向不能为空", "error");
     if (!payload.title) return setStatus(importStatus, "标题不能为空", "error");
     if (!payload.text.trim()) return setStatus(importStatus, "正文不能为空", "error");
 
@@ -362,7 +198,6 @@ if (importForm) {
       importForm.querySelector("[name=title]").value = "";
       importForm.querySelector("[name=text]").value = "";
       lastKnownQuery = payload.query;
-      await refreshImportedList(payload.query);
     } catch (error) {
       setStatus(importStatus, `保存失败: ${error?.message ?? error}`, "error");
     }
@@ -441,7 +276,7 @@ function renderQuestionGrid(questions) {
     <article class="training-card add-card" data-add-card>
       <strong>+</strong>
       <h4>继续导入抽题</h4>
-      <p>粘贴更多 LLM JSON 或调用 LLM 抽题扩展问题池。</p>
+      <p>粘贴更多 LLM JSON 扩展问题池。</p>
     </article>`);
 
   grid.innerHTML = cards.join("");
@@ -540,60 +375,8 @@ if (extractForm) {
   });
 }
 
-// "调用 LLM 抽题" — uses the most-recent article for the chosen query.
-const llmExtractBtn = document.querySelector("[data-llm-extract]");
-if (llmExtractBtn) {
-  llmExtractBtn.addEventListener("click", async () => {
-    setStatus(extractStatus, "", null);
-    const queryInput = document
-      .getElementById("extract-import-form")
-      ?.querySelector("[name=query]");
-    const query = queryInput?.value?.trim() ?? "";
-    if (!query) return setStatus(extractStatus, "方向不能为空", "error");
-    setStatus(extractStatus, "正在调用 LLM 抽题...", "ok");
-    try {
-      const articleResp = await fetch(`/api/articles?query=${encodeURIComponent(query)}`);
-      const articleBody = await articleResp.json().catch(() => null);
-      const articles = articleBody?.articles ?? [];
-      if (articles.length === 0) {
-        setStatus(
-          extractStatus,
-          "找不到该方向的文章。请先用 '手动粘贴' 或 '牛客' 导入一篇。",
-          "error"
-        );
-        return;
-      }
-      const latest = articles[articles.length - 1];
-      const response = await fetch("/api/questions/extract", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query, articleId: latest.id })
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        setStatus(
-          extractStatus,
-          `LLM 抽题失败: ${body?.error ?? `HTTP ${response.status}`} · 可改用粘贴 JSON`,
-          "error"
-        );
-        return;
-      }
-      setStatus(
-        extractStatus,
-        `LLM 已抽 ${body.added.length} 条 · 重复 ${body.duplicates.length}`,
-        body.added.length > 0 ? "ok" : "error"
-      );
-      lastKnownQuery = query;
-      await refreshQuestionPool(query);
-    } catch (error) {
-      setStatus(
-        extractStatus,
-        `LLM 抽题失败: ${error?.message ?? error} · 可改用粘贴 JSON`,
-        "error"
-      );
-    }
-  });
-}
+// Automatic extraction now happens inside
+// /api/sources/nowcoder/fetch. Manual JSON paste remains as a fallback.
 
 // Delegated PATCH handler for the "忽略" action on question cards.
 document.addEventListener("click", async (event) => {
@@ -1298,7 +1081,7 @@ if (nowcoderForm) {
     const data = new FormData(nowcoderForm);
     const query = String(data.get("query") ?? "").trim();
     const maxArticles = Number.parseInt(String(data.get("maxArticles") ?? "3"), 10);
-    if (!query) return setStatus(nowcoderStatus, "方向不能为空", "error");
+    // empty query is allowed — server treats it as 面经 feed mode.
     try {
       const response = await fetch("/api/sources/nowcoder/fetch", {
         method: "POST",
@@ -1315,19 +1098,40 @@ if (nowcoderForm) {
         if (nowcoderHint) nowcoderHint.textContent = "抓取失败不会影响手动粘贴链路。";
         return;
       }
-      const savedCount = body?.saved?.length ?? 0;
+      const savedArticleCount = body?.savedArticles?.length ?? body?.saved?.length ?? 0;
+      const savedQuestionCount = body?.savedQuestions?.length ?? 0;
       const failedCount = body?.failed?.length ?? 0;
-      const skippedCount = body?.skipped?.length ?? 0;
-      const parts = [`已保存 ${savedCount} 篇`];
-      if (skippedCount > 0) parts.push(`跳过 ${skippedCount} 篇旧文章`);
-      if (failedCount > 0) parts.push(`${failedCount} 篇失败`);
-      setStatus(
-        nowcoderStatus,
-        parts.join(" · "),
-        savedCount > 0 || skippedCount > 0 ? "ok" : "error"
-      );
-      lastKnownQuery = query;
-      await refreshImportedList(query);
+      const skippedCount = body?.skippedUrls?.length ?? body?.skipped?.length ?? 0;
+      const classifiedNo = body?.classifiedNo ?? 0;
+      const pruned = body?.prunedArticles ?? 0;
+      const diagnostics = body?.diagnostics ?? null;
+      const parts = [`已新增 ${savedQuestionCount} 个问题`];
+      parts.push(`抓 ${savedArticleCount} 篇`);
+      if (skippedCount > 0) parts.push(`跳过旧链接 ${skippedCount}`);
+      if (classifiedNo > 0) parts.push(`非面经 ${classifiedNo}`);
+      if (diagnostics?.extractionSkippedReason === "LLM_NOT_CONFIGURED") {
+        parts.push("未配置 LLM,仅保存文章");
+      } else if (diagnostics) {
+        if (diagnostics.extractionAttempted > 0) {
+          parts.push(`抽题 ${diagnostics.extractionAttempted} 篇`);
+        }
+        if (diagnostics.extractionNoQuestions > 0) {
+          parts.push(`无题 ${diagnostics.extractionNoQuestions} 篇`);
+        }
+      }
+      if (failedCount > 0) parts.push(`${failedCount} 失败`);
+      if (pruned > 0) parts.push(`已清理 ${pruned} 篇过期`);
+      const tone = savedQuestionCount > 0 || savedArticleCount > 0 ? "ok" : "error";
+      setStatus(nowcoderStatus, parts.join(" · "), tone);
+      if (body?.classifyError) {
+        setStatus(
+          nowcoderStatus,
+          `${parts.join(" · ")} · 标题分类失败,本批整批跳过`,
+          "error"
+        );
+      }
+      lastKnownQuery = query || lastKnownQuery;
+      await refreshQuestionPool(lastKnownQuery);
     } catch (error) {
       setStatus(
         nowcoderStatus,
@@ -1399,5 +1203,4 @@ const initialQuery =
   importForm?.querySelector("[name=query]")?.value?.trim() || "mysql";
 lastKnownQuery = initialQuery;
 
-refreshImportedList(initialQuery).catch(() => {});
 refreshQuestionPool(initialQuery).catch(() => {});

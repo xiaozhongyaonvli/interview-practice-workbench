@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,31 @@ import { sendJson } from "./src/api/http.js";
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(rootDir, "public");
 const DEFAULT_BASE_DIR = join(rootDir, "data");
+
+function loadLocalEnvFile(envPath = join(rootDir, ".env")) {
+  if (!existsSync(envPath)) return { loaded: false, keys: [] };
+  const body = readFileSync(envPath, "utf8");
+  const keys = [];
+  for (const line of body.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(trimmed);
+    if (!match) continue;
+    const key = match[1];
+    let value = match[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+      keys.push(key);
+    }
+  }
+  return { loaded: true, keys };
+}
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -99,7 +125,14 @@ export function createAppServer({
     llmService: resolvedLlmService
   });
   const cardsApi = createCardsApi({ questionStore, attemptStore, scoreStore, cardStore });
-  const sourcesApi = createSourcesApi({ nowCoderAdapter: nowCoder, articleStore });
+  const ttlDays = Number.parseInt(process.env.NOWCODER_ARTICLE_TTL_DAYS ?? "14", 10);
+  const sourcesApi = createSourcesApi({
+    nowCoderAdapter: nowCoder,
+    articleStore,
+    questionStore,
+    llmService: resolvedLlmService,
+    ttlDays: Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays : 14
+  });
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -107,7 +140,11 @@ export function createAppServer({
     // --- Health -----------------------------------------------------------
 
     if (url.pathname === "/health") {
-      sendJson(res, 200, { ok: true, service: "interview-training-workbench" });
+      sendJson(res, 200, {
+        ok: true,
+        service: "interview-training-workbench",
+        llmConfigured: Boolean(resolvedLlmService)
+      });
       return;
     }
 
@@ -236,6 +273,7 @@ export function startServer({ port = 8000, host = "127.0.0.1", baseDir = DEFAULT
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  loadLocalEnvFile();
   const port = Number.parseInt(process.env.PORT ?? "8000", 10);
   const host = process.env.HOST ?? "127.0.0.1";
   const baseDir = process.env.DATA_DIR ?? DEFAULT_BASE_DIR;

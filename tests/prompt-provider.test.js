@@ -42,3 +42,22 @@ test("missing placeholders are left as-is so prompt authors notice", async () =>
   assert.match(text, /面试题目:Q/);
   assert.match(text, /我的回答:A/);
 });
+
+test("interviewClassifyPrompt formats titles with their indices", async () => {
+  const provider = createPromptProvider();
+  const text = await provider.interviewClassifyPrompt({
+    titles: ["字节二面 MySQL 面经", "求帮看一份内推", "Redis 学习笔记"]
+  });
+  assert.match(text, /0\. 字节二面 MySQL 面经/);
+  assert.match(text, /1\. 求帮看一份内推/);
+  assert.match(text, /2\. Redis 学习笔记/);
+  // Schema rule must reach the model.
+  assert.match(text, /isInterview/);
+});
+
+test("interviewClassifyPrompt handles empty titles list without crashing", async () => {
+  const provider = createPromptProvider();
+  const text = await provider.interviewClassifyPrompt({ titles: [] });
+  // Body still rendered (no titles section), placeholder collapses to empty.
+  assert.match(text, /isInterview/);
+});

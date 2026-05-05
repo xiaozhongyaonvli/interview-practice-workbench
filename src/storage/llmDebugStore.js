@@ -3,7 +3,7 @@
 // must be visible AND preserve the original payload.
 //
 // Layout: <baseDir>/llm/<phase>_results.jsonl
-//   phase ∈ { "extraction", "scoring" }  (Step 9 will add "scoring")
+//   phase ∈ { "extraction", "scoring", "classify" }
 //
 // Each record is a tiny envelope, NOT the parsed payload, so we can capture
 // what arrived even when JSON.parse fails.
@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { StorageError } from "../domain/errors.js";
 import { appendJsonlRecord } from "./jsonlStore.js";
 
-const ALLOWED_PHASES = new Set(["extraction", "scoring"]);
+const ALLOWED_PHASES = new Set(["extraction", "scoring", "classify"]);
 
 export function createLlmDebugStore({ baseDir }) {
   if (typeof baseDir !== "string" || baseDir.length === 0) {
