@@ -230,28 +230,32 @@
             </div>
             <button class="full" type="button" data-new-attempt>+ 重新回答</button>
 
-            <div class="save-preview">
-              <h4>保存预览</h4>
-              <p>保存前确认分类和难度,避免污染正式卡片库。</p>
+            <form class="save-preview" data-save-card-form novalidate>
+              <h4>保存为卡片</h4>
+              <p data-save-preview-hint>需要至少一次完整评分,然后从评分通过的最佳回答沉淀。</p>
               <label>分类
-                <select>
-                  <option>MySQL</option>
-                  <option>Redis</option>
-                  <option>Java</option>
+                <select name="category" data-save-category>
+                  <option value="MySQL">MySQL</option>
+                  <option value="Redis">Redis</option>
+                  <option value="Java">Java</option>
+                  <option value="计网">计网</option>
+                  <option value="计系统">计系统</option>
+                  <option value="Agent">Agent</option>
                 </select>
               </label>
               <label>难度
-                <select>
-                  <option>中等</option>
-                  <option>简单</option>
-                  <option>困难</option>
+                <select name="difficulty" data-save-difficulty>
+                  <option value="medium">中等</option>
+                  <option value="easy">简单</option>
+                  <option value="hard">困难</option>
                 </select>
               </label>
-              <div class="save-checklist">
-                <span class="warn">需要至少一次完整评分 (Step 5)</span>
+              <div class="save-checklist" data-save-checklist>
+                <span class="warn" data-save-check-score>需要至少一次完整评分</span>
               </div>
-              <button class="primary full" type="button" disabled>确认保存为卡片 (Step 7 启用)</button>
-            </div>
+              <p class="source-status" data-save-status hidden></p>
+              <button class="primary full" type="submit" data-save-card-btn disabled>确认保存为卡片</button>
+            </form>
           </aside>
         </div>
       </section>

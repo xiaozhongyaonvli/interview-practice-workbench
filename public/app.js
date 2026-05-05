@@ -362,6 +362,8 @@ refreshQuestionPool(initialQuery).catch(() => {});
 // ---------------------------------------------------------------------------
 
 let currentQuestionId = null;
+let currentQuestion = null;
+let bestAttemptForSave = null;
 
 function statusLabelZh(s) {
   return (
@@ -442,6 +444,7 @@ async function refreshAttemptHistory(questionId) {
     );
     if (!response.ok) {
       list.innerHTML = '<p class="imported-empty">读取作答历史失败。</p>';
+      updateSavePreview({ question: currentQuestion, bestAttempt: null });
       return;
     }
     const body = await response.json();
@@ -450,6 +453,7 @@ async function refreshAttemptHistory(questionId) {
       list.innerHTML =
         '<p class="imported-empty">还没有作答记录。保存第一版回答后这里会出现历史。</p>';
       lastAttemptId = null;
+      updateSavePreview({ question: currentQuestion, bestAttempt: null });
       return;
     }
     // Newest first; the API returns oldest-first, so reverse for display.
@@ -461,9 +465,10 @@ async function refreshAttemptHistory(questionId) {
       clearFeedbackCard();
     }
 
-    // Step 6: identify the best-scoring attempt across the list and compute
-    // a per-attempt delta vs its predecessor (newest-first display order).
+    // Step 6/7: identify the best-scoring attempt across the list and
+    // compute a per-attempt delta vs its predecessor.
     const bestAttempt = selectBestAttemptClient(attempts);
+    updateSavePreview({ question: currentQuestion, bestAttempt });
 
     list.innerHTML = sorted
       .map((a, i) => {
@@ -555,9 +560,37 @@ function selectBestAttemptClient(attempts) {
 
 async function setActivePracticeQuestion(questionId) {
   currentQuestionId = questionId;
-  if (!questionId) return;
+  if (!questionId) {
+    currentQuestion = null;
+    return;
+  }
   const question = await fetchQuestionById(questionId);
+  currentQuestion = question;
   renderPracticeQuestion(question);
+  // Default the save-preview category to the question's own category so the
+  // user rarely has to change it manually.
+  const categorySelect = document.querySelector("[data-save-category]");
+  if (categorySelect && question?.category) {
+    for (const option of categorySelect.options) {
+      if (option.value === question.category) {
+        categorySelect.value = question.category;
+        break;
+      }
+    }
+  }
+  const difficultySelect = document.querySelector("[data-save-difficulty]");
+  if (difficultySelect && question?.difficulty) {
+    // normalizeDifficulty lives only on the server; for display we map
+    // Chinese labels back to en here.
+    const zhToEn = { 简单: "easy", 中等: "medium", 困难: "hard" };
+    const normalized = zhToEn[question.difficulty] ?? question.difficulty;
+    for (const option of difficultySelect.options) {
+      if (option.value === normalized) {
+        difficultySelect.value = normalized;
+        break;
+      }
+    }
+  }
   await refreshAttemptHistory(questionId);
 }
 
@@ -745,11 +778,125 @@ if (scoreForm) {
       renderFeedback(body);
       // Refresh attempt list so the latest summary surfaces in history too.
       if (currentQuestionId) await refreshAttemptHistory(currentQuestionId);
-      // Auto-collapse the form after a brief moment so the user can see the
-      // OK status, then focus the feedback card.
       setTimeout(() => setScoreFormVisible(false), 200);
     } catch (error) {
       setStatus(scoreStatus, `评分失败: ${error?.message ?? error}`, "error");
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Step 7: save a scored attempt as a curated CardRecord
+// ---------------------------------------------------------------------------
+
+const saveCardForm = document.querySelector("[data-save-card-form]");
+const saveCardBtn = saveCardForm?.querySelector("[data-save-card-btn]");
+const saveStatus = document.querySelector("[data-save-status]");
+const saveHint = document.querySelector("[data-save-preview-hint]");
+const saveCheckScore = document.querySelector("[data-save-check-score]");
+const saveChecklist = document.querySelector("[data-save-checklist]");
+
+function updateSavePreview({ question, bestAttempt }) {
+  bestAttemptForSave = bestAttempt ?? null;
+
+  if (!question) {
+    if (saveHint) saveHint.textContent = "请先从题目库选择一个问题。";
+    if (saveCardBtn) saveCardBtn.disabled = true;
+    if (saveCheckScore) {
+      saveCheckScore.textContent = "未选择问题";
+      saveCheckScore.className = "warn";
+    }
+    return;
+  }
+
+  if (!bestAttempt || !bestAttempt.summary) {
+    if (saveHint) {
+      saveHint.textContent =
+        "保存前需要至少一次完整评分。粘贴 LLM 评分 JSON 通过校验后,这里会解锁。";
+    }
+    if (saveCardBtn) saveCardBtn.disabled = true;
+    if (saveCheckScore) {
+      saveCheckScore.textContent = "还没有通过校验的评分";
+      saveCheckScore.className = "warn";
+    }
+    return;
+  }
+
+  // Scored + ready — unlock the save button. Show which attempt will be
+  // promoted so the user is not surprised.
+  const total = totalScoreClient(bestAttempt.summary);
+  const totalLabel = total === null ? "—" : total.toFixed(1);
+  if (saveHint) {
+    saveHint.textContent = `将保存最佳回答 (${totalLabel} / 10),分类和难度可在下面调整。`;
+  }
+  if (saveCardBtn) saveCardBtn.disabled = false;
+  if (saveCheckScore) {
+    saveCheckScore.textContent = `最佳评分 ${totalLabel}`;
+    saveCheckScore.className = "ok";
+  }
+}
+
+if (saveCardForm) {
+  saveCardForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setStatus(saveStatus, "", null);
+
+    if (!bestAttemptForSave) {
+      setStatus(saveStatus, "还没有可保存的评分 attempt", "error");
+      return;
+    }
+    const data = new FormData(saveCardForm);
+    const payload = {
+      attemptId: bestAttemptForSave.attemptId,
+      category: String(data.get("category") ?? ""),
+      difficulty: String(data.get("difficulty") ?? ""),
+      overwrite: false
+    };
+
+    try {
+      const response = await fetch("/api/cards/from-attempt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const body = await response.json().catch(() => null);
+      if (response.status === 400 && body?.code === "CARD_DUPLICATE_ID") {
+        // Confirm once before overwriting.
+        const ok = window.confirm
+          ? window.confirm("同名卡片已存在,是否覆盖?")
+          : true;
+        if (!ok) {
+          setStatus(saveStatus, "已取消保存", "error");
+          return;
+        }
+        const retry = await fetch("/api/cards/from-attempt", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...payload, overwrite: true })
+        });
+        const retryBody = await retry.json().catch(() => null);
+        if (!retry.ok) {
+          setStatus(
+            saveStatus,
+            `保存失败: ${retryBody?.error ?? `HTTP ${retry.status}`}`,
+            "error"
+          );
+          return;
+        }
+        setStatus(saveStatus, `已覆盖保存: ${retryBody.id}`, "ok");
+        return;
+      }
+      if (!response.ok) {
+        setStatus(
+          saveStatus,
+          `保存失败: ${body?.error ?? `HTTP ${response.status}`}`,
+          "error"
+        );
+        return;
+      }
+      setStatus(saveStatus, `已保存卡片: ${body.id}`, "ok");
+    } catch (error) {
+      setStatus(saveStatus, `保存失败: ${error?.message ?? error}`, "error");
     }
   });
 }

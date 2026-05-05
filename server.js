@@ -6,11 +6,13 @@ import { createArticleStore } from "./src/storage/articleStore.js";
 import { createQuestionStore } from "./src/storage/questionStore.js";
 import { createAttemptStore } from "./src/storage/attemptStore.js";
 import { createScoreStore } from "./src/storage/scoreStore.js";
+import { createCardStore } from "./src/storage/cardStore.js";
 import { createLlmDebugStore } from "./src/storage/llmDebugStore.js";
 import { createArticleApi } from "./src/api/articles.js";
 import { createQuestionApi } from "./src/api/questions.js";
 import { createAttemptApi } from "./src/api/attempts.js";
 import { createScoringApi } from "./src/api/scoring.js";
+import { createCardsApi } from "./src/api/cards.js";
 import { sendJson } from "./src/api/http.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
@@ -52,11 +54,13 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
   const questionStore = createQuestionStore({ baseDir });
   const attemptStore = createAttemptStore({ baseDir });
   const scoreStore = createScoreStore({ baseDir });
+  const cardStore = createCardStore({ baseDir });
   const llmDebugStore = createLlmDebugStore({ baseDir });
   const articleApi = createArticleApi({ articleStore });
   const questionApi = createQuestionApi({ questionStore, llmDebugStore });
   const attemptApi = createAttemptApi({ attemptStore, scoreStore });
   const scoringApi = createScoringApi({ attemptStore, scoreStore, llmDebugStore });
+  const cardsApi = createCardsApi({ questionStore, attemptStore, scoreStore, cardStore });
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -115,6 +119,18 @@ export function createAppServer({ baseDir = DEFAULT_BASE_DIR } = {}) {
     );
     if (attemptScoreMatch && req.method === "POST") {
       await scoringApi.handleScore(req, res, attemptScoreMatch[1]);
+      return;
+    }
+
+    // --- Card routes ------------------------------------------------------
+
+    if (url.pathname === "/api/cards/from-attempt" && req.method === "POST") {
+      await cardsApi.handleFromAttempt(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/cards" && req.method === "GET") {
+      await cardsApi.handleList(req, res);
       return;
     }
 
