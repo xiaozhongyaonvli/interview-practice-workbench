@@ -130,6 +130,7 @@ export function createCardsApi({
         primaryExpressionGap: score.summary.primaryExpressionGap,
         engineeringMindsetGap: score.summary.engineeringMindsetGap,
         retryInstruction: score.summary.retryInstruction,
+        ...pickRichFeedbackSections(score.summary),
         ...(score.feedback && typeof score.feedback === "object" ? score.feedback : {})
       };
 
@@ -187,4 +188,23 @@ export function createCardsApi({
   }
 
   return { handleFromAttempt, handleList };
+}
+
+function pickRichFeedbackSections(summary) {
+  const keys = [
+    "interviewerReview",
+    "expressionAnalysis",
+    "technicalAnalysis",
+    "highScoreAnswer",
+    "expressionComparison",
+    "essence",
+    "followUpQuestions",
+    "longTermAdvice"
+  ];
+  const sections = {};
+  for (const key of keys) {
+    const value = summary?.[key];
+    if (value !== undefined && value !== null) sections[key] = value;
+  }
+  return sections;
 }

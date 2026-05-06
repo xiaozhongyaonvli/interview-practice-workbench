@@ -176,8 +176,9 @@
               <button type="button" data-feedback-tab="expression">表达</button>
               <button type="button" data-feedback-tab="engineering">工程</button>
               <button type="button" data-feedback-tab="technical">技术</button>
+              <button type="button" data-feedback-tab="high-score">高分答案</button>
+              <button type="button" data-feedback-tab="essence">考点</button>
               <button type="button" data-feedback-tab="retry">重答建议</button>
-              <button type="button" data-feedback-tab="raw">原始 JSON</button>
             </div>
 
             <div class="feedback-card" data-feedback-card>
@@ -191,62 +192,93 @@
               </div>
 
               <div class="feedback-summary" data-feedback-summary hidden data-feedback-section="summary">
-                <div class="big-score">
-                  <span>直观总分</span>
-                  <strong data-big-score>—</strong>
-                  <em data-big-score-tier>—</em>
+                <div class="summary-hero">
+                  <div class="big-score">
+                    <span>综合评分</span>
+                    <strong data-big-score>—</strong>
+                    <em data-big-score-tier>—</em>
+                    <div class="score-meter" aria-hidden="true">
+                      <div data-total-score-bar></div>
+                    </div>
+                  </div>
+                  <div class="summary-callout">
+                    <strong>整体判断</strong>
+                    <p data-overall-comment>—</p>
+                  </div>
                 </div>
                 <div class="score-list" data-score-list>
-                  <span>技术正确性 <b>—</b></span>
-                  <span>覆盖完整度 <b>—</b></span>
-                  <span>逻辑结构 <b>—</b></span>
-                  <span>表达清晰度 <b>—</b></span>
-                  <span>面试表现 <b>—</b></span>
+                  <article class="score-row-card">
+                    <div><span>技术正确性</span><b>—</b></div>
+                    <div class="score-track"><i style="width:0%"></i></div>
+                  </article>
+                  <article class="score-row-card">
+                    <div><span>覆盖完整度</span><b>—</b></div>
+                    <div class="score-track"><i style="width:0%"></i></div>
+                  </article>
+                  <article class="score-row-card">
+                    <div><span>逻辑结构</span><b>—</b></div>
+                    <div class="score-track"><i style="width:0%"></i></div>
+                  </article>
+                  <article class="score-row-card">
+                    <div><span>表达清晰度</span><b>—</b></div>
+                    <div class="score-track"><i style="width:0%"></i></div>
+                  </article>
+                  <article class="score-row-card">
+                    <div><span>面试表现</span><b>—</b></div>
+                    <div class="score-track"><i style="width:0%"></i></div>
+                  </article>
                 </div>
               </div>
 
               <div class="feedback-section" data-feedback-section="expression" hidden>
-                <h5>表达缺口</h5>
-                <p data-gap-expression-detail>—</p>
+                <div class="section-lead">
+                  <h5>表达分析</h5>
+                  <p data-gap-expression-detail>—</p>
+                </div>
+                <div class="detail-list" data-expression-analysis></div>
               </div>
 
               <div class="feedback-section" data-feedback-section="engineering" hidden>
-                <h5>工程思想缺口</h5>
-                <p data-gap-engineering-detail>—</p>
+                <div class="section-lead">
+                  <h5>工程判断</h5>
+                  <p data-gap-engineering-detail>—</p>
+                </div>
+                <div class="detail-list" data-interviewer-review></div>
               </div>
 
               <div class="feedback-section" data-feedback-section="technical" hidden>
-                <h5>技术缺口</h5>
-                <p data-gap-technical-detail>—</p>
+                <div class="section-lead">
+                  <h5>技术分析</h5>
+                  <p data-gap-technical-detail>—</p>
+                </div>
+                <div class="detail-list" data-technical-analysis></div>
+              </div>
+
+              <div class="feedback-section" data-feedback-section="high-score" hidden>
+                <h5>高分答案</h5>
+                <div class="answer-models" data-high-score-answer>
+                  <article>
+                    <strong>基础版</strong>
+                    <p>—</p>
+                  </article>
+                  <article>
+                    <strong>进阶版</strong>
+                    <p>—</p>
+                  </article>
+                </div>
+              </div>
+
+              <div class="feedback-section" data-feedback-section="essence" hidden>
+                <h5>考点与长期建议</h5>
+                <div class="detail-list" data-essence></div>
+                <div class="detail-list" data-long-term-advice></div>
               </div>
 
               <div class="feedback-section" data-feedback-section="retry" hidden>
                 <h5>重答建议</h5>
                 <p data-retry-detail>—</p>
-              </div>
-
-              <div class="feedback-section" data-feedback-section="raw" hidden>
-                <h5>原始评分 JSON</h5>
-                <pre data-raw-summary class="raw-json">—</pre>
-              </div>
-
-              <div class="gap-grid" data-gap-grid hidden data-feedback-section="summary">
-                <article>
-                  <h5>技术缺口</h5>
-                  <p data-gap-technical>—</p>
-                </article>
-                <article>
-                  <h5>表达缺口</h5>
-                  <p data-gap-expression>—</p>
-                </article>
-                <article>
-                  <h5>工程思想缺口</h5>
-                  <p data-gap-engineering>—</p>
-                </article>
-              </div>
-              <div class="retry-box" data-retry-box hidden data-feedback-section="summary">
-                <h5>retryInstruction</h5>
-                <p data-retry-instruction>—</p>
+                <div class="detail-list" data-expression-comparison></div>
+                <div class="detail-list" data-follow-up-questions></div>
               </div>
             </div>
           </section>

@@ -23,7 +23,50 @@ const summary = {
   primaryTechnicalGap: "...",
   primaryExpressionGap: "...",
   engineeringMindsetGap: "...",
-  retryInstruction: "..."
+  retryInstruction: "...",
+  highScoreAnswer: {
+    basic: "基础高分回答",
+    advanced: "进阶高分回答"
+  },
+  interviewerReview: {
+    firstImpression: "第一印象",
+    willFollowUp: true,
+    followUpReason: "追问原因",
+    answerType: "回答类型",
+    unprofessionalSignals: ["信号"]
+  },
+  expressionAnalysis: {
+    mece: { conclusion: "MECE", duplicateExpressions: [], missingKeyPoints: [], structureCompleteness: "完整" },
+    structure: { conclusion: "结构", topDown: "是", clearPoints: "清楚", wanderingProblem: "无" },
+    scqa: { situation: "S", complication: "C", question: "Q", answer: "A", problems: [] },
+    sentenceIssues: []
+  },
+  technicalAnalysis: {
+    errors: [],
+    misunderstandings: [],
+    shallowParts: [],
+    missingKnowledge: ["执行计划"],
+    shouldExpand: []
+  },
+  expressionComparison: {
+    original: "原回答",
+    optimized: "优化表达",
+    keyChanges: ["先总后分"]
+  },
+  essence: {
+    examIntent: "考察意图",
+    questionType: "工程实践",
+    importance: "重要性"
+  },
+  followUpQuestions: [
+    { question: "追问", whyAsk: "原因", answerHint: "提示" }
+  ],
+  longTermAdvice: {
+    commonProblems: ["常见问题"],
+    expressionHabits: ["表达习惯"],
+    experiencedEngineerTips: ["资深建议"],
+    finalCoreGoal: "核心目标"
+  }
 };
 
 const extraction = {
@@ -91,6 +134,9 @@ test("POST /api/cards/from-attempt creates a CardRecord and writes cards/<id>.js
       assert.equal(card.feedbackPromptVersion, "interview-coach-v2");
       assert.equal(card.feedback.performanceScore.scores.technicalCorrectness, 8);
       assert.equal(card.feedback.engineeringMindsetGap, summary.engineeringMindsetGap);
+      assert.equal(card.feedback.highScoreAnswer.advanced, "进阶高分回答");
+      assert.equal(card.feedback.essence.examIntent, "考察意图");
+      assert.equal(card.feedback.longTermAdvice.finalCoreGoal, "核心目标");
 
       // Files exist on disk
       const onDisk = JSON.parse(

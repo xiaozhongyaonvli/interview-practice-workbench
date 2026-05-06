@@ -302,13 +302,13 @@ test("feedback tabs switch which feedback-section is visible", async () => {
     /expr-gap/
   );
 
-  // Click 原始 JSON tab.
-  document.querySelector('[data-feedback-tab="raw"]').click();
-  const rawSection = document.querySelector('[data-feedback-section="raw"]');
-  assert.equal(rawSection.hidden, false);
+  // Click 重答建议 tab.
+  document.querySelector('[data-feedback-tab="retry"]').click();
+  const retrySection = document.querySelector('[data-feedback-section="retry"]');
+  assert.equal(retrySection.hidden, false);
   assert.match(
-    document.querySelector("[data-raw-summary]").textContent,
-    /technicalCorrectness/
+    document.querySelector("[data-retry-detail]").textContent,
+    /retry/
   );
 });
 

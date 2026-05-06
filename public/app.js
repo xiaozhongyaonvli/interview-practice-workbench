@@ -809,6 +809,8 @@ function clearFeedbackCard() {
   document.querySelectorAll("[data-feedback-tab]").forEach((b) => {
     b.classList.toggle("active", b.dataset.feedbackTab === "summary");
   });
+  const overall = document.querySelector("[data-overall-comment]");
+  if (overall) overall.textContent = "—";
 }
 
 let activeFeedbackTab = "summary";
@@ -851,35 +853,254 @@ function renderFeedback(scoreRecord) {
 
   const big = document.querySelector("[data-big-score]");
   const tier = document.querySelector("[data-big-score-tier]");
+  const totalBar = document.querySelector("[data-total-score-bar]");
   if (big) big.textContent = total.toFixed(1);
   if (tier) tier.textContent = tierFromTotal(total);
+  if (totalBar) totalBar.style.width = `${Math.max(0, Math.min(100, total * 10))}%`;
+  const overall = document.querySelector("[data-overall-comment]");
+  if (overall) overall.textContent = s.overallComment ?? "—";
 
   const list = document.querySelector("[data-score-list]");
   if (list) {
-    list.innerHTML = `
-      <span>技术正确性 <b>${s.scores.technicalCorrectness} / 10</b></span>
-      <span>覆盖完整度 <b>${s.scores.coverageCompleteness} / 10</b></span>
-      <span>逻辑结构 <b>${s.scores.logicalStructure} / 10</b></span>
-      <span>表达清晰度 <b>${s.scores.expressionClarity} / 10</b></span>
-      <span>面试表现 <b>${s.scores.interviewPerformance} / 10</b></span>
-    `;
+    list.innerHTML = renderScoreRows([
+      ["技术正确性", s.scores.technicalCorrectness],
+      ["覆盖完整度", s.scores.coverageCompleteness],
+      ["逻辑结构", s.scores.logicalStructure],
+      ["表达清晰度", s.scores.expressionClarity],
+      ["面试表现", s.scores.interviewPerformance]
+    ]);
   }
 
-  // Tab content (each tab shows one feedback-section)
-  document.querySelector("[data-gap-technical]").textContent = s.primaryTechnicalGap ?? "—";
-  document.querySelector("[data-gap-expression]").textContent = s.primaryExpressionGap ?? "—";
-  document.querySelector("[data-gap-engineering]").textContent = s.engineeringMindsetGap ?? "—";
-  document.querySelector("[data-retry-instruction]").textContent = s.retryInstruction ?? "—";
+  const expressionNotes = [
+    s.primaryExpressionGap,
+  ].filter(Boolean);
+  const engineeringNotes = [
+    s.engineeringMindsetGap,
+    s.interviewerReview?.firstImpression,
+    s.interviewerReview?.followUpReason
+  ].filter(Boolean);
 
   document.querySelector("[data-gap-technical-detail]").textContent = s.primaryTechnicalGap ?? "—";
-  document.querySelector("[data-gap-expression-detail]").textContent = s.primaryExpressionGap ?? "—";
-  document.querySelector("[data-gap-engineering-detail]").textContent = s.engineeringMindsetGap ?? "—";
+  document.querySelector("[data-gap-expression-detail]").textContent =
+    expressionNotes.join("\n\n") || "—";
+  document.querySelector("[data-gap-engineering-detail]").textContent =
+    engineeringNotes.join("\n\n") || "—";
   document.querySelector("[data-retry-detail]").textContent = s.retryInstruction ?? "—";
 
-  const raw = document.querySelector("[data-raw-summary]");
-  if (raw) raw.textContent = JSON.stringify(s, null, 2);
+  renderInterviewerReview(s.interviewerReview);
+  renderExpressionAnalysis(s.expressionAnalysis);
+  renderTechnicalAnalysis(s.technicalAnalysis);
+  renderHighScoreAnswer(s.highScoreAnswer);
+  renderEssence(s.essence);
+  renderLongTermAdvice(s.longTermAdvice);
+  renderExpressionComparison(s.expressionComparison);
+  renderFollowUpQuestions(s.followUpQuestions);
 
   showFeedbackSections();
+}
+
+function renderScoreRows(entries) {
+  return entries
+    .map(([label, value]) => {
+      const score = Number(value) || 0;
+      const width = Math.max(0, Math.min(100, score * 10));
+      return `<article class="score-row-card">
+        <div><span>${escapeHtml(label)}</span><b>${escapeHtml(String(score.toFixed(1).replace(/\.0$/, "")))} / 10</b></div>
+        <div class="score-track"><i style="width:${width}%"></i></div>
+      </article>`;
+    })
+    .join("");
+}
+
+function normalizeList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item ?? "").trim()).filter(Boolean);
+}
+
+function renderNamedList(title, items, className = "") {
+  const clean = normalizeList(items);
+  if (clean.length === 0) return "";
+  const klass = className ? ` class="${escapeHtml(className)}"` : "";
+  return `<section${klass}><strong>${escapeHtml(title)}</strong><ul>${clean
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("")}</ul></section>`;
+}
+
+function renderFieldBlock(title, value, className = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const klass = className ? ` class="${escapeHtml(className)}"` : "";
+  return `<section${klass}><strong>${escapeHtml(title)}</strong><p>${escapeHtml(text)}</p></section>`;
+}
+
+function renderInterviewerReview(review) {
+  const node = document.querySelector("[data-interviewer-review]");
+  if (!node) return;
+  if (!review || typeof review !== "object") {
+    node.innerHTML = "";
+    return;
+  }
+  node.innerHTML = [
+    renderFieldBlock("第一印象", review.firstImpression, "review-block lead"),
+    renderFieldBlock("回答类型", review.answerType, "review-block compact"),
+    renderFieldBlock("是否会追问", review.willFollowUp === true ? "会" : review.willFollowUp === false ? "不会" : "", "review-block compact"),
+    renderFieldBlock("追问原因", review.followUpReason, "review-block"),
+    renderNamedList("不专业信号", review.unprofessionalSignals, "review-signals")
+  ].join("");
+}
+
+function renderExpressionAnalysis(analysis) {
+  const node = document.querySelector("[data-expression-analysis]");
+  if (!node) return;
+  if (!analysis || typeof analysis !== "object") {
+    node.innerHTML = "";
+    return;
+  }
+  const sentenceIssues = Array.isArray(analysis.sentenceIssues)
+    ? analysis.sentenceIssues.filter((item) => item && typeof item === "object")
+    : [];
+  node.innerHTML = [
+    renderAnalysisGroup("MECE", [
+      renderFieldBlock("判断", analysis.mece?.conclusion, "analysis-note"),
+      renderFieldBlock("结构完整性", analysis.mece?.structureCompleteness, "analysis-note"),
+      renderNamedList("重复表达", analysis.mece?.duplicateExpressions, "analysis-list"),
+      renderNamedList("缺失关键点", analysis.mece?.missingKeyPoints, "analysis-list")
+    ]),
+    renderAnalysisGroup("结构", [
+      renderFieldBlock("整体判断", analysis.structure?.conclusion, "analysis-note"),
+      renderFieldBlock("先总后分", analysis.structure?.topDown, "analysis-note"),
+      renderFieldBlock("分点清晰度", analysis.structure?.clearPoints, "analysis-note"),
+      renderFieldBlock("主线问题", analysis.structure?.wanderingProblem, "analysis-note")
+    ]),
+    renderAnalysisGroup("SCQA", [
+      renderFieldBlock("背景", analysis.scqa?.situation, "scqa-step"),
+      renderFieldBlock("复杂点", analysis.scqa?.complication, "scqa-step"),
+      renderFieldBlock("面试官真正想问", analysis.scqa?.question, "scqa-step"),
+      renderFieldBlock("理想回答主线", analysis.scqa?.answer, "scqa-step answer"),
+      renderNamedList("当前问题", analysis.scqa?.problems, "analysis-list")
+    ]),
+    sentenceIssues.length
+      ? `<section class="sentence-review"><strong>逐句问题</strong>${sentenceIssues
+          .map(
+            (item) => `<article class="follow-up">
+              <b>${escapeHtml(item.quote || "—")}</b>
+              <p>${escapeHtml(item.issue || "")}</p>
+              <p>${escapeHtml(item.suggestion || "")}</p>
+            </article>`
+          )
+          .join("")}</section>`
+      : ""
+  ].join("");
+}
+
+function renderAnalysisGroup(title, parts) {
+  const body = parts.filter(Boolean).join("");
+  if (!body) return "";
+  return `<section class="analysis-group"><strong>${escapeHtml(title)}</strong>${body}</section>`;
+}
+
+function renderTechnicalAnalysis(analysis) {
+  const node = document.querySelector("[data-technical-analysis]");
+  if (!node) return;
+  if (!analysis || typeof analysis !== "object") {
+    node.innerHTML = "";
+    return;
+  }
+  node.innerHTML = [
+    renderNamedList("错误 / 混淆", analysis.errors, "tech-list errors"),
+    renderNamedList("误解", analysis.misunderstandings, "tech-list warnings"),
+    renderNamedList("浅层回答", analysis.shallowParts, "tech-list shallow"),
+    renderNamedList("缺失知识", analysis.missingKnowledge, "tech-list missing"),
+    renderNamedList("应展开", analysis.shouldExpand, "tech-list expand")
+  ].join("");
+}
+
+function renderHighScoreAnswer(highScoreAnswer) {
+  const node = document.querySelector("[data-high-score-answer]");
+  if (!node) return;
+  const basic = String(highScoreAnswer?.basic ?? "").trim();
+  const advanced = String(highScoreAnswer?.advanced ?? "").trim();
+  node.innerHTML = `
+    <article class="answer-card basic">
+      <strong>基础版</strong>
+      <p>${escapeHtml(basic || "—")}</p>
+    </article>
+    <article class="answer-card advanced">
+      <strong>进阶版</strong>
+      <p>${escapeHtml(advanced || "—")}</p>
+    </article>
+  `;
+}
+
+function renderExpressionComparison(comparison) {
+  const node = document.querySelector("[data-expression-comparison]");
+  if (!node) return;
+  if (!comparison || typeof comparison !== "object") {
+    node.innerHTML = "";
+    return;
+  }
+  const changes = renderNamedList("关键变化", comparison.keyChanges);
+  node.innerHTML = `
+    <section class="comparison-before">
+      <strong>原回答</strong>
+      <p>${escapeHtml(comparison.original || "—")}</p>
+    </section>
+    <section class="comparison-after">
+      <strong>优化表达</strong>
+      <p>${escapeHtml(comparison.optimized || "—")}</p>
+    </section>
+    ${changes}
+  `;
+}
+
+function renderEssence(essence) {
+  const node = document.querySelector("[data-essence]");
+  if (!node) return;
+  if (!essence || typeof essence !== "object") {
+    node.innerHTML = "";
+    return;
+  }
+  node.innerHTML = [
+    renderFieldBlock("考察意图", essence.examIntent, "essence-block intent"),
+    renderFieldBlock("题型", essence.questionType, "essence-block type"),
+    renderFieldBlock("重要性", essence.importance, "essence-block importance")
+  ].join("");
+}
+
+function renderLongTermAdvice(advice) {
+  const node = document.querySelector("[data-long-term-advice]");
+  if (!node) return;
+  if (!advice || typeof advice !== "object") {
+    node.innerHTML = "";
+    return;
+  }
+  node.innerHTML = [
+    renderNamedList("常见问题", advice.commonProblems, "advice-list common"),
+    renderNamedList("表达习惯", advice.expressionHabits, "advice-list habits"),
+    renderNamedList("资深建议", advice.experiencedEngineerTips, "advice-list senior"),
+    renderFieldBlock("核心目标", advice.finalCoreGoal, "advice-goal")
+  ].join("");
+}
+
+function renderFollowUpQuestions(questions) {
+  const node = document.querySelector("[data-follow-up-questions]");
+  if (!node) return;
+  const clean = Array.isArray(questions)
+    ? questions.filter((item) => item && typeof item === "object")
+    : [];
+  if (clean.length === 0) {
+    node.innerHTML = "";
+    return;
+  }
+  node.innerHTML = `<section><strong>可能追问</strong>${clean
+    .map(
+      (item) => `<article class="follow-up">
+        <b>${escapeHtml(item.question || "—")}</b>
+        <p>${escapeHtml(item.whyAsk || "")}</p>
+        <p>${escapeHtml(item.answerHint || "")}</p>
+      </article>`
+    )
+    .join("")}</section>`;
 }
 
 if (scoreForm) {
