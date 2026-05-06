@@ -68,6 +68,42 @@ export function createQuestionStore({ baseDir }) {
       list[index] = merged;
       await writeAll(list);
       return merged;
+    },
+
+    // Idempotent removal. Returns { removed: false } when the id is not in
+    // the pool; only storage write failures throw.
+    async remove(id) {
+      const list = await readAll();
+      const index = list.findIndex((q) => q.id === id);
+      if (index < 0) {
+        return { removed: false };
+      }
+      const next = list.slice(0, index).concat(list.slice(index + 1));
+      await writeAll(next);
+      return { removed: true };
+    },
+
+    // Remove every record matching predicate in a single rewrite.
+    async removeWhere(predicate) {
+      if (typeof predicate !== "function") {
+        throw new StorageError("removeWhere predicate must be a function", {
+          code: "STORE_CONFIG_INVALID"
+        });
+      }
+      const list = await readAll();
+      const kept = [];
+      let removedCount = 0;
+      for (const q of list) {
+        if (predicate(q)) {
+          removedCount += 1;
+        } else {
+          kept.push(q);
+        }
+      }
+      if (removedCount > 0) {
+        await writeAll(kept);
+      }
+      return { removedCount };
     }
   };
 }

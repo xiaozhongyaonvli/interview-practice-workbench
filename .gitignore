@@ -3,6 +3,7 @@ data/*.json
 data/*.jsonl
 data/*.log
 data/articles/
+data/crawl-cursors/
 data/questions/
 data/attempts/
 data/cards/

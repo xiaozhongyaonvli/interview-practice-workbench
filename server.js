@@ -9,6 +9,7 @@ import { createAttemptStore } from "./src/storage/attemptStore.js";
 import { createScoreStore } from "./src/storage/scoreStore.js";
 import { createCardStore } from "./src/storage/cardStore.js";
 import { createLlmDebugStore } from "./src/storage/llmDebugStore.js";
+import { createCrawlCursorStore } from "./src/storage/crawlCursorStore.js";
 import { createNowCoderAdapter } from "./src/sources/nowcoderAdapter.js";
 import { defaultPromptProvider } from "./src/llm/promptProvider.js";
 import { createDeepSeekChat } from "./src/llm/deepSeekClient.js";
@@ -91,6 +92,7 @@ export function createAppServer({
   const scoreStore = createScoreStore({ baseDir });
   const cardStore = createCardStore({ baseDir });
   const llmDebugStore = createLlmDebugStore({ baseDir });
+  const crawlCursorStore = createCrawlCursorStore({ baseDir });
   // The caller can inject a mock adapter in tests; production uses the real
   // adapter wired to Node's global fetch.
   const nowCoder = nowCoderAdapter ?? createNowCoderAdapter();
@@ -130,6 +132,7 @@ export function createAppServer({
     nowCoderAdapter: nowCoder,
     articleStore,
     questionStore,
+    crawlCursorStore,
     llmService: resolvedLlmService,
     ttlDays: Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays : 14
   });
@@ -169,6 +172,11 @@ export function createAppServer({
 
     if (url.pathname === "/api/questions/extract" && req.method === "POST") {
       await questionApi.handleExtract(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/questions/purge-ignored" && req.method === "POST") {
+      await questionApi.handlePurgeIgnored(req, res);
       return;
     }
 

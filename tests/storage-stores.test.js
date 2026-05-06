@@ -11,6 +11,7 @@ import { createArticleStore } from "../src/storage/articleStore.js";
 import { createQuestionStore } from "../src/storage/questionStore.js";
 import { createAttemptStore } from "../src/storage/attemptStore.js";
 import { createCardStore } from "../src/storage/cardStore.js";
+import { createCrawlCursorStore } from "../src/storage/crawlCursorStore.js";
 import { StorageError, ValidationError } from "../src/domain/errors.js";
 
 async function makeBase() {
@@ -397,6 +398,142 @@ test("cardStore: empty index returns []", async () => {
   try {
     const store = createCardStore({ baseDir });
     assert.deepEqual(await store.listIndex(), []);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// questionStore.remove / removeWhere (Phase A persistence improvements)
+// ---------------------------------------------------------------------------
+
+test("questionStore.remove: deletes a record by id and returns { removed: true }", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createQuestionStore({ baseDir });
+    await store.add({ ...questionSample });
+    const result = await store.remove("mysql-slow-sql");
+    assert.deepEqual(result, { removed: true });
+    assert.deepEqual(await store.list(), []);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("questionStore.remove: missing id returns { removed: false } (idempotent)", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createQuestionStore({ baseDir });
+    const result = await store.remove("does-not-exist");
+    assert.deepEqual(result, { removed: false });
+    // Calling on a populated store but with an unknown id is also idempotent.
+    await store.add({ ...questionSample });
+    const result2 = await store.remove("still-not-here");
+    assert.deepEqual(result2, { removed: false });
+    const list = await store.list();
+    assert.equal(list.length, 1);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("questionStore.removeWhere: removes only records matching predicate", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createQuestionStore({ baseDir });
+    await store.add({ ...questionSample, id: "q1", status: "candidate" });
+    await store.add({ ...questionSample, id: "q2", status: "ignored" });
+    await store.add({ ...questionSample, id: "q3", status: "ignored" });
+    await store.add({ ...questionSample, id: "q4", status: "accepted" });
+    const result = await store.removeWhere((q) => q.status === "ignored");
+    assert.equal(result.removedCount, 2);
+    const list = await store.list();
+    assert.deepEqual(
+      list.map((q) => q.id).sort(),
+      ["q1", "q4"]
+    );
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("questionStore.removeWhere: returns removedCount: 0 when nothing matches", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createQuestionStore({ baseDir });
+    await store.add({ ...questionSample });
+    const result = await store.removeWhere((q) => q.status === "ignored");
+    assert.deepEqual(result, { removedCount: 0 });
+    const list = await store.list();
+    assert.equal(list.length, 1);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("questionStore.removeWhere: predicate must be a function", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createQuestionStore({ baseDir });
+    await assert.rejects(store.removeWhere(null), StorageError);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// crawlCursorStore (used by per-day fetch advancement)
+// ---------------------------------------------------------------------------
+
+test("crawlCursorStore: get on missing key returns nextOffset: 0", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createCrawlCursorStore({ baseDir });
+    const cursor = await store.get("feed-__feed__-2026-05-06");
+    assert.equal(cursor.nextOffset, 0);
+    assert.equal(cursor.updatedAt, null);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("crawlCursorStore: set then get round-trip preserves nextOffset", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createCrawlCursorStore({ baseDir });
+    await store.set("feed-__feed__-2026-05-06", { nextOffset: 4 });
+    const got = await store.get("feed-__feed__-2026-05-06");
+    assert.equal(got.nextOffset, 4);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("crawlCursorStore: reset returns nextOffset to 0", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createCrawlCursorStore({ baseDir });
+    await store.set("feed-__feed__-2026-05-06", { nextOffset: 4 });
+    await store.reset("feed-__feed__-2026-05-06");
+    const got = await store.get("feed-__feed__-2026-05-06");
+    assert.equal(got.nextOffset, 0);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("crawlCursorStore: write is atomic (no half files left if rename never happened)", async () => {
+  // We can't easily kill the process mid-write, but we can confirm the
+  // tmp-then-rename pattern leaves no .tmp orphan after a successful set.
+  const baseDir = await makeBase();
+  try {
+    const store = createCrawlCursorStore({ baseDir });
+    await store.set("feed-__feed__-2026-05-06", { nextOffset: 7 });
+    const dir = join(baseDir, "crawl-cursors");
+    const { readdir } = await import("node:fs/promises");
+    const entries = await readdir(dir);
+    const tmps = entries.filter((name) => name.endsWith(".tmp"));
+    assert.deepEqual(tmps, []);
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

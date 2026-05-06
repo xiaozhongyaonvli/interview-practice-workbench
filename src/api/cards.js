@@ -94,12 +94,36 @@ export function createCardsApi({
       }
 
       const questions = await questionStore.list();
-      const question = questions.find((q) => q.id === attempt.questionId);
+      let question = questions.find((q) => q.id === attempt.questionId);
       if (!question) {
-        throw new ValidationError(
-          `question "${attempt.questionId}" not found`,
-          { code: "QUESTION_NOT_FOUND", path: "questionId" }
-        );
+        // The question may have already been removed by a prior successful
+        // save-as-card on the same attempt (the Phase A persistence flow
+        // physically deletes the source question once it sinks into a card).
+        // To keep the duplicate-check + overwrite path usable, fall back to
+        // an existing card with the matching id and synthesize a question
+        // shape from it so downstream code continues to work.
+        const candidateId =
+          body.cardId && SAFE_ID.test(body.cardId)
+            ? body.cardId
+            : SAFE_ID.test(attempt.questionId)
+              ? attempt.questionId
+              : null;
+        const priorCard = candidateId
+          ? await cardStore.getById(candidateId)
+          : null;
+        if (!priorCard) {
+          throw new ValidationError(
+            `question "${attempt.questionId}" not found`,
+            { code: "QUESTION_NOT_FOUND", path: "questionId" }
+          );
+        }
+        question = {
+          id: priorCard.id,
+          question: priorCard.question ?? priorCard.title ?? "",
+          tags: Array.isArray(priorCard.tags) ? priorCard.tags : [],
+          category: priorCard.category,
+          difficulty: priorCard.difficulty
+        };
       }
 
       const id = body.cardId && SAFE_ID.test(body.cardId) ? body.cardId : deriveCardId(question);
@@ -166,7 +190,24 @@ export function createCardsApi({
       };
 
       const saved = await cardStore.save(record);
-      sendJson(res, 201, saved);
+
+      // Once the card is persisted (the source of truth for graduated work),
+      // remove the original question from the practice pool. Idempotent —
+      // an already-removed question yields { removed: false } and we just
+      // log. Failure here must not block the card response: the card is
+      // already saved, an orphaned pool entry is recoverable later.
+      let questionRemoved = false;
+      try {
+        const result = await questionStore.remove(question.id);
+        questionRemoved = Boolean(result?.removed);
+      } catch (removeErr) {
+        console.warn(
+          "questionStore.remove after card save failed:",
+          removeErr?.message ?? removeErr
+        );
+      }
+
+      sendJson(res, 201, { ...saved, questionRemoved });
     } catch (err) {
       sendError(res, err);
     }

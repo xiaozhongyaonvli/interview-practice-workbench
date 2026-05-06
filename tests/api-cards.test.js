@@ -344,3 +344,93 @@ test("POST /api/cards/from-attempt 4xxs for an unknown attemptId", async () => {
     await rm(baseDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Phase A persistence: card save physically removes the source question,
+// but attempts and scores survive.
+// ---------------------------------------------------------------------------
+
+test("POST /api/cards/from-attempt removes the source question from the pool", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const { question, attempt } = await seedFullChain(baseUrl);
+
+      // Sanity: question is in the pool BEFORE the save.
+      const before = await (
+        await fetch(`${baseUrl}/api/questions?includeIgnored=1`)
+      ).json();
+      assert.ok(before.questions.find((q) => q.id === question.id));
+
+      const response = await fetch(`${baseUrl}/api/cards/from-attempt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          attemptId: attempt.attemptId,
+          category: "MySQL",
+          difficulty: "medium"
+        })
+      });
+      assert.equal(response.status, 201);
+      const card = await response.json();
+      assert.equal(card.questionRemoved, true);
+
+      // Pool no longer lists the question — even with includeIgnored=1.
+      const after = await (
+        await fetch(`${baseUrl}/api/questions?includeIgnored=1`)
+      ).json();
+      assert.equal(after.questions.find((q) => q.id === question.id), undefined);
+
+      // Attempts (and the score that attempt carries) are not cascaded.
+      const attempts = await (
+        await fetch(`${baseUrl}/api/attempts?questionId=${question.id}`)
+      ).json();
+      assert.equal(attempts.attempts.length, 1);
+      assert.equal(attempts.attempts[0].attemptId, attempt.attemptId);
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/cards/from-attempt is non-fatal when the question is already gone", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const { attempt } = await seedFullChain(baseUrl);
+
+      // First save succeeds and removes the question.
+      const r1 = await fetch(`${baseUrl}/api/cards/from-attempt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          attemptId: attempt.attemptId,
+          category: "MySQL",
+          difficulty: "medium",
+          overwrite: true
+        })
+      });
+      assert.equal(r1.status, 201);
+      const first = await r1.json();
+      assert.equal(first.questionRemoved, true);
+
+      // Second save with overwrite=true: question is gone, fallback uses
+      // the prior card; the second remove is a no-op (idempotent).
+      const r2 = await fetch(`${baseUrl}/api/cards/from-attempt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          attemptId: attempt.attemptId,
+          category: "MySQL",
+          difficulty: "medium",
+          overwrite: true
+        })
+      });
+      assert.equal(r2.status, 201);
+      const second = await r2.json();
+      assert.equal(second.questionRemoved, false);
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});

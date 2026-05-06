@@ -255,7 +255,10 @@ test("PATCH /api/questions/:id updates status and persists across reads", async 
       const updated = await patchResp.json();
       assert.equal(updated.status, "ignored");
 
-      const list = await (await fetch(`${baseUrl}/api/questions`)).json();
+      // Default GET hides ignored — surface them via ?includeIgnored=1.
+      const list = await (
+        await fetch(`${baseUrl}/api/questions?includeIgnored=1`)
+      ).json();
       const stored = list.questions.find((q) => q.id === targetId);
       assert.equal(stored.status, "ignored");
     }, { baseDir });
@@ -320,6 +323,160 @@ test("POST /api/questions/import requires query and source", async () => {
       const r2 = await importBody(baseUrl, { query: "mysql", extraction: validExtraction });
       assert.equal(r2.status, 400);
       assert.equal((await r2.json()).path, "source");
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// includeIgnored / purge-ignored / import-time auto-purge
+// (Phase A persistence improvements)
+// ---------------------------------------------------------------------------
+
+async function patchStatus(baseUrl, id, status) {
+  return await fetch(`${baseUrl}/api/questions/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status })
+  });
+}
+
+test("GET /api/questions hides ignored by default", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const importResp = await importBody(baseUrl, {
+        query: "mysql",
+        source: "manual",
+        extraction: validExtraction
+      });
+      const { added } = await importResp.json();
+      const ignoredId = added[0].id;
+      await patchStatus(baseUrl, ignoredId, "ignored");
+
+      const defaultList = await (await fetch(`${baseUrl}/api/questions`)).json();
+      assert.equal(defaultList.questions.find((q) => q.id === ignoredId), undefined);
+      assert.equal(defaultList.questions.length, 1);
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/questions?includeIgnored=1 returns ignored too", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const importResp = await importBody(baseUrl, {
+        query: "mysql",
+        source: "manual",
+        extraction: validExtraction
+      });
+      const { added } = await importResp.json();
+      await patchStatus(baseUrl, added[0].id, "ignored");
+
+      const full = await (
+        await fetch(`${baseUrl}/api/questions?includeIgnored=1`)
+      ).json();
+      assert.equal(full.questions.length, 2);
+      assert.equal(full.meta.includeIgnored, true);
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/questions/purge-ignored physically deletes ignored records", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const importResp = await importBody(baseUrl, {
+        query: "mysql",
+        source: "manual",
+        extraction: validExtraction
+      });
+      const { added } = await importResp.json();
+      await patchStatus(baseUrl, added[0].id, "ignored");
+      await patchStatus(baseUrl, added[1].id, "ignored");
+
+      const purgeResp = await fetch(`${baseUrl}/api/questions/purge-ignored`, {
+        method: "POST"
+      });
+      assert.equal(purgeResp.status, 200);
+      const body = await purgeResp.json();
+      assert.equal(body.removedCount, 2);
+
+      // ?includeIgnored=1 also no longer returns them — physical delete.
+      const full = await (
+        await fetch(`${baseUrl}/api/questions?includeIgnored=1`)
+      ).json();
+      assert.equal(full.questions.length, 0);
+
+      // Second call is a no-op.
+      const second = await fetch(`${baseUrl}/api/questions/purge-ignored`, {
+        method: "POST"
+      });
+      assert.equal(second.status, 200);
+      assert.equal((await second.json()).removedCount, 0);
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/questions/purge-ignored returns 0 when pool has no ignored", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const r = await fetch(`${baseUrl}/api/questions/purge-ignored`, {
+        method: "POST"
+      });
+      assert.equal(r.status, 200);
+      assert.equal((await r.json()).removedCount, 0);
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/questions/import auto-purges ignored and returns purgedIgnored", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const first = await importBody(baseUrl, {
+        query: "mysql",
+        source: "manual",
+        extraction: validExtraction
+      });
+      const { added } = await first.json();
+      await patchStatus(baseUrl, added[0].id, "ignored");
+      await patchStatus(baseUrl, added[1].id, "ignored");
+
+      const second = await importBody(baseUrl, {
+        query: "redis",
+        source: "manual",
+        extraction: {
+          questions: [
+            {
+              question: "Redis 缓存击穿怎么处理?",
+              category: "Redis",
+              difficulty: "medium",
+              confidence: 0.85
+            }
+          ]
+        }
+      });
+      assert.equal(second.status, 200);
+      const body = await second.json();
+      assert.equal(body.purgedIgnored, 2);
+
+      const all = await (
+        await fetch(`${baseUrl}/api/questions?includeIgnored=1`)
+      ).json();
+      // Two ignored gone, one new redis question added.
+      assert.equal(all.questions.length, 1);
+      assert.equal(all.questions[0].category, "Redis");
     }, { baseDir });
   } finally {
     await rm(baseDir, { recursive: true, force: true });

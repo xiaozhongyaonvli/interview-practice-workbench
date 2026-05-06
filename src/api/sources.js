@@ -1,17 +1,20 @@
 // Sources API — POST /api/sources/nowcoder/fetch.
 //
-// New flow (per docs/phase-a-nowcoder-feed-classify-design.md):
+// Flow (per docs/phase-a-fetch-and-persistence-improvements.md):
 //   1. prune nowcoder ArticleRecord older than TTL_DAYS (default 14).
-//   2. resolve effective query: missing/empty -> "" (feed mode).
-//   3. compute excludeUrls from articleStore for that query partition.
-//   4. delegate to nowCoderAdapter.searchAndFetch with a classifyTitles hook
-//      bound to the LLM service. Adapter returns only the candidates that
-//      passed title-level "is interview?" classification.
-//   5. for each surviving record: append to articleStore, then immediately
+//   2. auto-purge ignored questions so the pool never lingers long-term.
+//   3. resolve effective query: missing/empty -> "" (feed mode).
+//   4. compute partitionQuery + per-day cursorKey.
+//   5. read crawlCursorStore for the offset to start at today.
+//   6. compute excludeUrls from articleStore for that query partition.
+//   7. delegate to nowCoderAdapter.searchAndFetch with offset + classifyTitles.
+//      Adapter returns post-classify records and `nextOffset` based on the
+//      candidate slice it consumed.
+//   8. for each surviving record: append to articleStore, then immediately
 //      call llmService.extractQuestions on the article body and persist the
 //      resulting QuestionRecords.
-//   6. respond with { discovered, classifiedYes, classifiedNo, savedArticles,
-//      savedQuestions, skippedUrls, failed, prunedArticles, classifyError }.
+//   9. when adapter consumed at least one candidate (fresh.length > 0):
+//      advance the cursor; otherwise mark exhaustedToday: true.
 //
 // LLM service is optional. If absent, classification is skipped (treat all as
 // interview) and extraction also skipped — caller can still get article bodies
@@ -20,7 +23,13 @@
 import { ValidationError } from "../domain/errors.js";
 import { extractionItemToQuestionRecord } from "../domain/extraction.js";
 import { FEED_QUERY_SENTINEL } from "../sources/nowcoderAdapter.js";
+import { autoPurgeIgnored } from "./questions.js";
 import { readJsonBody, sendJson, sendError } from "./http.js";
+
+// Hard cap: every fetch returns at most this many fresh articles. The UI no
+// longer exposes a knob — 2 is enough for one LLM extraction round and keeps
+// the tab-switch loop snappy.
+const NOWCODER_MAX_ARTICLES_PER_FETCH = 2;
 
 // Empty string is allowed (feed mode); otherwise only safe word chars.
 const SAFE_QUERY_OR_EMPTY = /^[\p{L}\p{N}_-]{0,64}$/u;
@@ -34,13 +43,27 @@ function generateNowCoderId(query) {
   return `nowcoder-${slug}-${Date.now().toString(36)}-${randomSuffix()}`;
 }
 
+// Local-timezone YYYY-MM-DD with explicit two-digit padding. We avoid
+// toLocaleDateString (locale-dependent separators) and toISOString (UTC drift
+// near midnight). The dateKey is computed once per request so a fetch that
+// straddles midnight stays consistent.
+function defaultLocalDateKey() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export function createSourcesApi({
   nowCoderAdapter,
   articleStore,
   questionStore = null,
+  crawlCursorStore = null,
   llmService = null,
   ttlDays = 14,
-  now = () => new Date().toISOString()
+  now = () => new Date().toISOString(),
+  today = defaultLocalDateKey
 }) {
   if (!nowCoderAdapter) throw new Error("createSourcesApi: nowCoderAdapter required");
   if (!articleStore) throw new Error("createSourcesApi: articleStore required");
@@ -58,7 +81,8 @@ export function createSourcesApi({
           { code: "NOWCODER_INPUT_INVALID", path: "query" }
         );
       }
-      const maxArticles = Number.isInteger(body?.maxArticles) ? body.maxArticles : 3;
+      // body.maxArticles is intentionally ignored — the constant rules to
+      // keep the UI honest. We accept the field silently for back-compat.
 
       // 1. Prune. Failure here must NOT block the fetch — log and continue.
       let prunedArticles = 0;
@@ -75,8 +99,37 @@ export function createSourcesApi({
         console.warn("nowcoder prune failed (continuing):", pruneErr?.message ?? pruneErr);
       }
 
-      // 2. Compute exclusion set from the matching query partition.
+      // 2. Auto-purge ignored questions before any new questions land.
+      const purgedIgnored = questionStore ? await autoPurgeIgnored(questionStore) : 0;
+
+      // 3-4. Resolve partition + per-day cursor key. Compute dateKey ONCE so
+      // a fetch crossing local midnight does not split itself across two
+      // cursor files.
       const partitionQuery = query === "" ? FEED_QUERY_SENTINEL : query;
+      const mode = query === "" ? "feed" : "search";
+      const dateKey = today();
+      const cursorKey = `${mode}-${partitionQuery}-${dateKey}`;
+
+      // 5. Read today's offset (defaults to 0 on first hit / new day / cursor
+      // store missing). Failure to read is non-fatal: fall back to 0 and let
+      // URL dedup do the heavy lifting.
+      let cursorOffset = 0;
+      if (crawlCursorStore && typeof crawlCursorStore.get === "function") {
+        try {
+          const cursor = await crawlCursorStore.get(cursorKey);
+          if (Number.isInteger(cursor?.nextOffset) && cursor.nextOffset >= 0) {
+            cursorOffset = cursor.nextOffset;
+          }
+        } catch (cursorErr) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            "crawlCursorStore.get failed (continuing with offset 0):",
+            cursorErr?.message ?? cursorErr
+          );
+        }
+      }
+
+      // 6. Compute exclusion set from the matching query partition.
       let excludeUrls = [];
       try {
         const existing = await articleStore.listByQuery(partitionQuery);
@@ -87,7 +140,7 @@ export function createSourcesApi({
         excludeUrls = [];
       }
 
-      // 3. Bind classifier (only when LLM service is available).
+      // 7. Bind classifier (only when LLM service is available).
       let classifyTitles = null;
       if (llmService && typeof llmService.classifyInterviewTitles === "function") {
         classifyTitles = async (titles) => {
@@ -96,10 +149,11 @@ export function createSourcesApi({
         };
       }
 
-      // 4. Delegate to adapter.
+      // 8. Delegate to adapter — pinned to the constant cap.
       const result = await nowCoderAdapter.searchAndFetch({
         query,
-        maxArticles,
+        maxArticles: NOWCODER_MAX_ARTICLES_PER_FETCH,
+        offset: cursorOffset,
         excludeUrls,
         classifyTitles
       });
@@ -116,7 +170,16 @@ export function createSourcesApi({
         extractionFailed: 0,
         questionValidationSkipped: 0,
         questionStoreDuplicates: 0,
-        articleTextStats: []
+        articleTextStats: [],
+        cursor: {
+          key: cursorKey,
+          dateKey,
+          mode,
+          offsetBefore: cursorOffset,
+          offsetAfter: cursorOffset,
+          advanced: false,
+          writeError: null
+        }
       };
 
       for (const r of result.records) {
@@ -145,7 +208,7 @@ export function createSourcesApi({
           continue;
         }
 
-        // 5. Auto-extract questions from this article (if LLM + store wired).
+        // 9. Auto-extract questions from this article (if LLM + store wired).
         if (llmService && questionStore) {
           diagnostics.extractionAttempted += 1;
           try {
@@ -206,12 +269,52 @@ export function createSourcesApi({
         diagnostics.extractionSkippedReason = "LLM_NOT_CONFIGURED";
       }
 
+      // Cursor advancement uses adapter-reported nextOffset. The adapter
+      // computes nextOffset = offset + fresh.length where fresh is the
+      // post-exclude pre-classify slice — so the cursor still advances when
+      // classify rejects every title, avoiding re-judging the same batch.
+      // We treat "no fresh candidates" (links + records both empty) as
+      // exhausted-for-today, and infer a fallback nextOffset from the
+      // visible candidate count when an older adapter omits it.
+      const freshCount = Array.isArray(result?.links)
+        ? result.links.length
+        : Array.isArray(result?.records)
+          ? result.records.length
+          : 0;
+      const adapterNextOffset = Number.isInteger(result?.nextOffset)
+        ? result.nextOffset
+        : cursorOffset + freshCount;
+      const exhaustedToday = freshCount === 0;
+      if (
+        !exhaustedToday &&
+        crawlCursorStore &&
+        typeof crawlCursorStore.set === "function"
+      ) {
+        try {
+          await crawlCursorStore.set(cursorKey, { nextOffset: adapterNextOffset });
+          diagnostics.cursor.offsetAfter = adapterNextOffset;
+          diagnostics.cursor.advanced = true;
+        } catch (cursorErr) {
+          // Non-fatal: URL dedup will still keep us from double-saving.
+          // eslint-disable-next-line no-console
+          console.warn(
+            "crawlCursorStore.set failed (continuing):",
+            cursorErr?.message ?? cursorErr
+          );
+          diagnostics.cursor.writeError =
+            cursorErr?.message ?? String(cursorErr);
+        }
+      }
+
       const classifiedYesCount = (result.classifiedYes ?? []).length;
       const classifiedNoCount = (result.classifiedNo ?? []).length;
 
       sendJson(res, 200, {
-        mode: result.mode ?? (query === "" ? "feed" : "search"),
+        mode: result.mode ?? mode,
         partitionQuery,
+        dateKey,
+        exhaustedToday,
+        purgedIgnored,
         entryUrl: result.entryUrl ?? result.searchUrl ?? null,
         // legacy field name kept for tests/old callers
         searchUrl: result.searchUrl ?? result.entryUrl ?? null,
@@ -241,3 +344,5 @@ export function createSourcesApi({
 
   return { handleNowCoderFetch };
 }
+
+export { NOWCODER_MAX_ARTICLES_PER_FETCH };

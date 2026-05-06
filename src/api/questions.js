@@ -1,4 +1,5 @@
-// Question API — POST import (LLM JSON paste), GET list, PATCH status.
+// Question API — POST import (LLM JSON paste), GET list, PATCH status,
+// POST purge-ignored.
 //
 // Step 3 explicitly does not call a real LLM — the user pastes the
 // extraction JSON. We still treat the payload as untrusted: parse + schema
@@ -29,6 +30,21 @@ function requireString(value, field, code = "QUESTION_INPUT_INVALID") {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+// Best-effort purge of status=ignored from the pool. Used at write-side
+// entry points (nowcoder fetch / question import) so ignored records never
+// linger long-term. Never throws — failure is logged and the caller
+// continues.
+export async function autoPurgeIgnored(questionStore) {
+  try {
+    if (!questionStore || typeof questionStore.removeWhere !== "function") return 0;
+    const result = await questionStore.removeWhere((q) => q.status === "ignored");
+    return result?.removedCount ?? 0;
+  } catch (err) {
+    console.warn("auto-purge ignored failed:", err?.message ?? err);
+    return 0;
+  }
 }
 
 export function createQuestionApi({ questionStore, llmDebugStore, articleStore = null, llmService = null, now = nowIso }) {
@@ -114,6 +130,9 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
         throw err;
       }
 
+      // Auto-purge ignored before adding new items so the pool stays bounded.
+      const purgedIgnored = await autoPurgeIgnored(questionStore);
+
       // Convert each extraction item into a full QuestionRecord, then insert
       // into the store one by one so we can report duplicates and per-item
       // errors instead of failing the whole import.
@@ -161,7 +180,7 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
       // Even when every item failed, we return 200 with the breakdown so the
       // user can see what happened. Outright invalid bodies were already
       // handled above with a 4xx.
-      sendJson(res, 200, { added, duplicates, errors });
+      sendJson(res, 200, { added, duplicates, errors, purgedIgnored });
     } catch (err) {
       sendError(res, err);
     }
@@ -173,11 +192,17 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
       const query = url.searchParams.get("query");
       const category = url.searchParams.get("category");
       const status = url.searchParams.get("status");
+      const includeIgnoredRaw = url.searchParams.get("includeIgnored");
+      const includeIgnored = includeIgnoredRaw === "1" || includeIgnoredRaw === "true";
 
       const filtered = all.filter((q) => {
         if (query && q.query !== query) return false;
         if (category && q.category !== category) return false;
-        if (status && q.status !== status) return false;
+        if (status) {
+          if (q.status !== status) return false;
+        } else if (!includeIgnored && q.status === "ignored") {
+          return false;
+        }
         return true;
       });
 
@@ -187,7 +212,8 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
           total: all.length,
           filtered: filtered.length,
           categories: ALLOWED_CATEGORIES,
-          statuses: QUESTION_STATUSES
+          statuses: QUESTION_STATUSES,
+          includeIgnored
         }
       });
     } catch (err) {
@@ -228,7 +254,16 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
     }
   }
 
-  return { handleImport, handleList, handleUpdate, handleExtract };
+  // POST /api/questions/purge-ignored — physically remove every record with
+  // status=ignored from the pool. Returns { removedCount } even when zero.
+  async function handlePurgeIgnored(req, res) {
+    try {
+      const result = await questionStore.removeWhere((q) => q.status === "ignored");
+      sendJson(res, 200, { removedCount: result?.removedCount ?? 0 });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
 
   /**
    * POST /api/questions/extract — call the real LLM to extract questions
@@ -286,6 +321,8 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
         text
       });
 
+      const purgedIgnored = await autoPurgeIgnored(questionStore);
+
       const provenance = {
         query: body.query,
         source,
@@ -318,9 +355,11 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
         }
       }
 
-      sendJson(res, 200, { added, duplicates, errors });
+      sendJson(res, 200, { added, duplicates, errors, purgedIgnored });
     } catch (err) {
       sendError(res, err);
     }
   }
+
+  return { handleImport, handleList, handleUpdate, handleExtract, handlePurgeIgnored };
 }

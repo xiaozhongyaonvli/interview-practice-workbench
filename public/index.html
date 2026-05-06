@@ -68,10 +68,9 @@
 
               <form data-source-panel="nowcoder" class="source-panel" id="nowcoder-fetch-form" hidden novalidate>
                 <input name="query" value="" placeholder="留空获取最新面经,或输入方向(如 mysql)" aria-label="方向关键词">
-                <input name="maxArticles" value="3" type="number" min="1" max="20" aria-label="抓取篇数">
                 <p class="source-status" data-source-status hidden></p>
                 <button class="primary full" type="submit">抓取面经</button>
-                <p class="source-hint" data-nowcoder-hint>抓取后会自动判断是否面经并抽题,只展示问题。失败时可切换到"手动粘贴"。</p>
+                <p class="source-hint" data-nowcoder-hint>每次固定抓 2 篇,自动判断是否面经并抽题。当天抓完后会提示已耗尽,失败时可切换到"手动粘贴"。</p>
               </form>
 
               <form data-source-panel="extract" class="source-panel" id="extract-import-form" hidden novalidate>
@@ -102,6 +101,7 @@
               <div class="toolbar-actions">
                 <input type="search" placeholder="搜索问题、标签、来源" data-search-input aria-label="搜索问题">
                 <button class="ghost" type="button" data-clear-filter>清除筛选</button>
+                <button class="ghost" type="button" data-purge-ignored title="物理删除所有已忽略的题">清空已忽略</button>
                 <button class="primary" type="button" data-new-question>+ 新建</button>
               </div>
             </div>

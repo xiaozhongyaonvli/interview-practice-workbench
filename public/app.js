@@ -25,6 +25,50 @@ let lastQuestionsResponse = { questions: [], meta: null };
 let lastAttemptsByQuestion = new Map(); // questionId -> attempts[]
 
 // ---------------------------------------------------------------------------
+// Frontend persistence (localStorage)
+// ---------------------------------------------------------------------------
+//
+// The backend remains the source of truth — these keys only persist
+// navigation state so the user does not lose their place on refresh.
+
+const STORAGE_KEYS = Object.freeze({
+  lastKnownQuery: "itw.lastKnownQuery",
+  currentQuestionId: "itw.currentQuestionId"
+});
+const VALID_VIEWS = new Set(["home", "practice", "cards"]);
+
+function safeStorageGet(key) {
+  try {
+    return window.localStorage?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    if (value === null || value === undefined || value === "") {
+      window.localStorage?.removeItem(key);
+    } else {
+      window.localStorage?.setItem(key, String(value));
+    }
+  } catch {
+    /* localStorage may be disabled (private mode); we degrade silently. */
+  }
+}
+
+function setLastKnownQuery(partition) {
+  if (typeof partition !== "string" || partition.length === 0) return;
+  lastKnownQuery = partition;
+  safeStorageSet(STORAGE_KEYS.lastKnownQuery, partition);
+}
+
+function setCurrentQuestionIdState(id) {
+  currentQuestionId = id ?? null;
+  safeStorageSet(STORAGE_KEYS.currentQuestionId, currentQuestionId);
+}
+
+// ---------------------------------------------------------------------------
 // Generic helpers
 // ---------------------------------------------------------------------------
 
@@ -72,6 +116,7 @@ const views = document.querySelectorAll("[data-view]");
 const navLinks = document.querySelectorAll("[data-view-link]");
 
 function showView(name, options = {}) {
+  if (!VALID_VIEWS.has(name)) name = "home";
   views.forEach((view) => {
     const active = view.dataset.view === name;
     view.hidden = !active;
@@ -80,6 +125,19 @@ function showView(name, options = {}) {
   navLinks.forEach((link) => {
     link.classList.toggle("active", link.dataset.viewLink === name);
   });
+
+  // Persist current view in the URL so a refresh restores the same screen.
+  // We deliberately only manage the hash; the rest of the URL is untouched.
+  if (typeof window !== "undefined" && window.location) {
+    const desired = `#${name}`;
+    if (window.location.hash !== desired) {
+      try {
+        window.location.hash = name;
+      } catch {
+        /* some embedded environments forbid hash writes */
+      }
+    }
+  }
 
   if (typeof window.scrollTo === "function") {
     try {
@@ -93,8 +151,9 @@ function showView(name, options = {}) {
     setActivePracticeQuestion(options.questionId);
   }
   if (name === "home") {
-    // Refresh the pool + metric strip so scores from the practice view
-    // surface in the toolbar and avg-score immediately.
+    // Leaving practice clears the persisted question pointer so a later
+    // refresh on the home view does not bounce the user back.
+    setCurrentQuestionIdState(null);
     refreshQuestionPool(lastKnownQuery).catch(() => {});
   }
   if (name === "cards") {
@@ -197,7 +256,8 @@ if (importForm) {
       setStatus(importStatus, `已保存: ${body?.title ?? payload.title}`, "ok");
       importForm.querySelector("[name=title]").value = "";
       importForm.querySelector("[name=text]").value = "";
-      lastKnownQuery = payload.query;
+      setLastKnownQuery(payload.query);
+      await refreshQuestionPool(lastKnownQuery);
     } catch (error) {
       setStatus(importStatus, `保存失败: ${error?.message ?? error}`, "error");
     }
@@ -307,14 +367,15 @@ function renderToolbarSummary(questions) {
   const total = questions.length;
   const candidate = questions.filter((q) => q.status === "candidate").length;
   const accepted = questions.filter((q) => q.status === "accepted").length;
-  const ignored = questions.filter((q) => q.status === "ignored").length;
   const mastered = questions.filter((q) => q.status === "mastered").length;
   const filtered = applyFilters(questions).length;
   if (total === 0) {
     summary.textContent = "暂无问题";
     return;
   }
-  let text = `共 ${total} 个问题 · ${candidate} 候选 · ${accepted} 已保留 · ${ignored} 已忽略 · ${mastered} 已掌握`;
+  // ignored is filtered out by the API by default — no longer shown in
+  // the summary. The toolbar button "清空已忽略" handles bulk cleanup.
+  let text = `共 ${total} 个问题 · ${candidate} 候选 · ${accepted} 已保留 · ${mastered} 已掌握`;
   if (filtered !== total) {
     text += ` · 当前筛选 ${filtered}`;
   }
@@ -367,13 +428,17 @@ if (extractForm) {
         setStatus(extractStatus, `导入失败: ${body?.error ?? `HTTP ${response.status}`}`, "error");
         return;
       }
+      const purgedNote =
+        Number.isInteger(body?.purgedIgnored) && body.purgedIgnored > 0
+          ? ` · 已清理 ${body.purgedIgnored} 条忽略`
+          : "";
       setStatus(
         extractStatus,
-        `已导入 ${body.added.length} 条 · 重复 ${body.duplicates.length} · 错误 ${body.errors.length}`,
+        `已导入 ${body.added.length} 条 · 重复 ${body.duplicates.length} · 错误 ${body.errors.length}${purgedNote}`,
         body.added.length > 0 ? "ok" : "error"
       );
       extractForm.querySelector("[name=rawResponse]").value = "";
-      lastKnownQuery = query;
+      setLastKnownQuery(query);
       await refreshQuestionPool(query);
     } catch (error) {
       setStatus(extractStatus, `导入失败: ${error?.message ?? error}`, "error");
@@ -414,6 +479,7 @@ document.addEventListener("click", async (event) => {
 
 const searchInput = document.querySelector("[data-search-input]");
 const clearFilterBtn = document.querySelector("[data-clear-filter]");
+const purgeIgnoredBtn = document.querySelector("[data-purge-ignored]");
 const newQuestionBtn = document.querySelector("[data-new-question]");
 
 if (searchInput) {
@@ -436,6 +502,40 @@ if (clearFilterBtn) {
     renderQuestionGrid(lastQuestionsResponse.questions);
     renderCategoryCounts(lastQuestionsResponse.questions);
     renderToolbarSummary(lastQuestionsResponse.questions);
+  });
+}
+
+if (purgeIgnoredBtn) {
+  purgeIgnoredBtn.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "确认物理删除所有已忽略的题?该操作不可撤销,但 attempts/scores 历史保留。"
+    );
+    if (!ok) return;
+    purgeIgnoredBtn.disabled = true;
+    try {
+      const response = await fetch("/api/questions/purge-ignored", {
+        method: "POST",
+        headers: { "content-type": "application/json" }
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        window.alert(`清空失败: ${body?.error ?? `HTTP ${response.status}`}`);
+        return;
+      }
+      const count = Number.isInteger(body?.removedCount) ? body.removedCount : 0;
+      const summary = document.querySelector("[data-toolbar-summary]");
+      if (summary) {
+        summary.textContent =
+          count === 0
+            ? "当前已忽略池为空"
+            : `已物理删除 ${count} 条已忽略`;
+      }
+      await refreshQuestionPool(lastKnownQuery);
+    } catch (error) {
+      window.alert(`清空失败: ${error?.message ?? error}`);
+    } finally {
+      purgeIgnoredBtn.disabled = false;
+    }
   });
 }
 
@@ -678,12 +778,29 @@ function selectBestAttemptClient(attempts) {
 }
 
 async function setActivePracticeQuestion(questionId) {
-  currentQuestionId = questionId;
+  setCurrentQuestionIdState(questionId);
   if (!questionId) {
     currentQuestion = null;
     return;
   }
-  const question = await fetchQuestionById(questionId);
+  let question;
+  try {
+    question = await fetchQuestionById(questionId);
+  } catch (err) {
+    // Stale id (purged / promoted to a card / never existed). Roll back to
+    // home so the user is not stuck on an empty practice page.
+    console.warn("setActivePracticeQuestion: question lookup failed", err);
+    currentQuestion = null;
+    setCurrentQuestionIdState(null);
+    showView("home");
+    return;
+  }
+  if (!question) {
+    currentQuestion = null;
+    setCurrentQuestionIdState(null);
+    showView("home");
+    return;
+  }
   currentQuestion = question;
   renderPracticeQuestion(question);
 
@@ -1273,6 +1390,11 @@ async function submitSaveCard() {
         return;
       }
       setStatus(saveStatus, `已覆盖保存: ${retryBody.id}`, "ok");
+      // The backend removes the question from the pool on a successful
+      // save; clear the persisted pointer so a refresh does not bounce
+      // the user back to a now-empty practice page.
+      setCurrentQuestionIdState(null);
+      refreshQuestionPool(lastKnownQuery).catch(() => {});
       return;
     }
     if (!response.ok) {
@@ -1280,6 +1402,8 @@ async function submitSaveCard() {
       return;
     }
     setStatus(saveStatus, `已保存卡片: ${body.id}`, "ok");
+    setCurrentQuestionIdState(null);
+    refreshQuestionPool(lastKnownQuery).catch(() => {});
   } catch (error) {
     setStatus(saveStatus, `保存失败: ${error?.message ?? error}`, "error");
   }
@@ -1307,13 +1431,13 @@ if (nowcoderForm) {
     setStatus(nowcoderStatus, "正在抓取牛客面经...", "ok");
     const data = new FormData(nowcoderForm);
     const query = String(data.get("query") ?? "").trim();
-    const maxArticles = Number.parseInt(String(data.get("maxArticles") ?? "3"), 10);
     // empty query is allowed — server treats it as 面经 feed mode.
+    // maxArticles is no longer a UI knob; the server pins it to 2.
     try {
       const response = await fetch("/api/sources/nowcoder/fetch", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query, maxArticles })
+        body: JSON.stringify({ query })
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
@@ -1331,7 +1455,9 @@ if (nowcoderForm) {
       const skippedCount = body?.skippedUrls?.length ?? body?.skipped?.length ?? 0;
       const classifiedNo = body?.classifiedNo ?? 0;
       const pruned = body?.prunedArticles ?? 0;
+      const purgedIgnored = Number.isInteger(body?.purgedIgnored) ? body.purgedIgnored : 0;
       const diagnostics = body?.diagnostics ?? null;
+      const exhaustedToday = body?.exhaustedToday === true;
       const parts = [`已新增 ${savedQuestionCount} 个问题`];
       parts.push(`抓 ${savedArticleCount} 篇`);
       if (skippedCount > 0) parts.push(`跳过旧链接 ${skippedCount}`);
@@ -1348,7 +1474,13 @@ if (nowcoderForm) {
       }
       if (failedCount > 0) parts.push(`${failedCount} 失败`);
       if (pruned > 0) parts.push(`已清理 ${pruned} 篇过期`);
-      const tone = savedQuestionCount > 0 || savedArticleCount > 0 ? "ok" : "error";
+      if (purgedIgnored > 0) parts.push(`已清理 ${purgedIgnored} 条忽略`);
+      if (exhaustedToday) parts.push("今天的牛客池子已抓完,明天再试或换关键词");
+      const tone = exhaustedToday
+        ? "ok"
+        : savedQuestionCount > 0 || savedArticleCount > 0
+          ? "ok"
+          : "error";
       setStatus(nowcoderStatus, parts.join(" · "), tone);
       if (body?.classifyError) {
         setStatus(
@@ -1357,7 +1489,8 @@ if (nowcoderForm) {
           "error"
         );
       }
-      lastKnownQuery = body?.partitionQuery ?? query ?? lastKnownQuery;
+      const partition = body?.partitionQuery ?? (query === "" ? "__feed__" : query);
+      setLastKnownQuery(partition);
       await refreshQuestionPool(lastKnownQuery);
     } catch (error) {
       setStatus(
@@ -1425,9 +1558,43 @@ async function refreshCardsView() {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
+//
+// Restore navigation state from localStorage + URL hash so a refresh keeps
+// the user on the same partition / view / question. The backend stays the
+// source of truth for everything else.
 
-const initialQuery =
-  importForm?.querySelector("[name=query]")?.value?.trim() || "mysql";
-lastKnownQuery = initialQuery;
+(function bootRestore() {
+  const storedQuery = safeStorageGet(STORAGE_KEYS.lastKnownQuery);
+  if (storedQuery && typeof storedQuery === "string" && storedQuery.length > 0) {
+    lastKnownQuery = storedQuery;
+  } else {
+    // Fall back to the manual-import form's query input on first run only.
+    const manualDefault =
+      importForm?.querySelector("[name=query]")?.value?.trim() || "__feed__";
+    lastKnownQuery = manualDefault;
+  }
 
-refreshQuestionPool(initialQuery).catch(() => {});
+  refreshQuestionPool(lastKnownQuery).catch(() => {});
+
+  const hashView = (() => {
+    const raw = (window.location?.hash ?? "").replace(/^#/, "");
+    return VALID_VIEWS.has(raw) ? raw : "home";
+  })();
+
+  if (hashView === "practice") {
+    const storedQuestionId = safeStorageGet(STORAGE_KEYS.currentQuestionId);
+    if (storedQuestionId) {
+      // setActivePracticeQuestion handles stale ids: if the question is
+      // gone (purged / saved as card / never existed), it clears the
+      // pointer and bounces back to home.
+      showView("practice", { questionId: storedQuestionId });
+    } else {
+      showView("home");
+    }
+  } else if (hashView === "cards") {
+    showView("cards");
+  } else {
+    showView("home");
+  }
+})();
+
