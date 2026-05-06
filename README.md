@@ -1,91 +1,150 @@
-# 面经训练工作台 (Interview Training Workbench)
+# Interview Training Workbench
 
-本地优先的面试训练工作台。Phase A 把以下闭环
+A local-first interview practice workbench for fetching interview posts, extracting questions, scoring answers, and saving review cards.
 
-```text
-方向 -> 文章 -> 问题 -> 回答 -> 评分 -> 重答 -> 保存卡片
-```
+## What It Does
 
-变成一个浏览器可用的应用,所有数据用 JSON / JSONL 文件存储——不依赖
-数据库、不需要登录、不上云。
-
-## 启动
-
-```powershell
-node server.js
-```
-
-然后打开 <http://127.0.0.1:8000/>。
-
-默认端口和地址可以覆盖:
-
-```powershell
-$env:PORT=18000; $env:HOST="127.0.0.1"; node server.js
-```
-
-## LLM (可选)
-
-只有配置了 DeepSeek API key,真实 LLM 调用才会启用。手动粘贴通路在
-没有 key 的情况下仍然可用。
-
-```powershell
-copy .env.example .env
-# 编辑 .env,填入 DEEPSEEK_API_KEY=sk-...
-```
-
-服务启动时读取 `process.env.DEEPSEEK_API_KEY`。可以直接在终端 export,
-也可以使用任意 `.env` 加载工具(`.env` 本身已在 `.gitignore` 里)。
-
-## 测试
-
-```powershell
-npm test            # 单元 + 集成测试
-npm run test:e2e    # jsdom 驱动的前端端到端测试
-npm run test:schema # 数据 schema 校验
-```
-
-每完成一个 Phase A step,这三套必须全部通过才能进入下一个。详见
-父项目的 `docs/phase-a-implementation-plan.md`。
-
-## 目录结构
+This project turns the following loop into a browser-based local application:
 
 ```text
-public/         前端 (vanilla HTML/CSS/JS, 不带打包)
-src/domain/    数据 schema 与领域规则
-src/storage/   按 record 类型分文件的 JSON/JSONL 存储
-src/sources/   外部数据来源适配器 (NowCoder)
-src/llm/       prompt provider + DeepSeek client + 评估服务
-src/api/       HTTP 路由处理
-prompts/       LLM 提示词模板 (extraction、interview-coach-v2)
-data/          运行时状态 (已 gitignore)
-tests/         单元 / e2e / schema 测试套件
+topic -> article -> question -> answer -> score -> retry -> save as card
 ```
 
-## Phase A 进度
+All runtime data is stored on local disk with JSON / JSONL files. There is no database, no login flow, and no cloud dependency for the core workflow.
 
-`docs/phase-a-implementation-plan.md` 中的 9 个 step 已全部完成:
+## Core Features
 
-| Step | 主题 | API |
-|------|------|-----|
-| 0 | 骨架 + 视图切换 | `/health`,静态文件 |
-| 1 | 领域模型 + 存储 | — |
-| 2 | 手动文章导入 | `POST /api/articles/manual`,`GET /api/articles` |
-| 3 | 抽题 JSON 粘贴 | `POST /api/questions/import`,`GET /api/questions`,`PATCH /api/questions/:id` |
-| 4 | 作答与 Attempt | `POST /api/attempts`,`GET /api/attempts?questionId=` |
-| 5 | 评分 JSON 粘贴 | `POST /api/attempts/:id/score` |
-| 6 | 重答对比与最佳 Attempt | (前端计算) |
-| 7 | 保存为卡片 | `POST /api/cards/from-attempt`,`GET /api/cards` |
-| 8 | NowCoder 抓取 | `POST /api/sources/nowcoder/fetch` |
-| 9 | 真实 LLM | `POST /api/questions/extract`,`POST /api/attempts/:id/llm-score` |
+- Import manual interview articles
+- Fetch interview posts from NowCoder
+- Extract questions into a local question pool
+- Save multiple answer attempts per question
+- Score attempts with pasted JSON or a live LLM call
+- Compare retries and keep the best attempt
+- Save strong attempts as long-lived review cards
+- Persist question pool, attempts, scores, cards, and fetch cursors locally
 
-## 工程约束
+## Current Fetch And Persistence Behavior
 
-- 不引入数据库 / ORM / 登录系统
-- attempts 是 append-only,重答 / 重评只追加,不覆盖
-- 卡片库 `cards/` 只能通过 `POST /api/cards/from-attempt` 写入,且要求
-  attempt 已评分
-- LLM 输出非法时,raw 响应保留到 `data/llm/<phase>_results.jsonl`,
-  绝不静默丢弃
-- 评分必须包含 `primaryTechnicalGap`、`primaryExpressionGap`、
-  `engineeringMindsetGap`、`retryInstruction` 四个 gap 字段
-- 抓取 / LLM 失败都不会阻塞手动粘贴通路
+- NowCoder fetch is fixed at 2 articles per request
+- Same-day repeated fetches advance with a per-day cursor
+- Cross-day fetches restart from offset 0, while URL dedup still prevents re-saving old articles
+- Ignored questions are hidden by default and can be purged in bulk
+- Saving a question as a card removes it from the active practice pool
+- The frontend restores the last active partition, view, and practice question with `localStorage` and `location.hash`
+
+## Getting Started
+
+Requirements:
+
+- Node.js `>= 22`
+
+Install dependencies:
+
+```powershell
+npm install
+```
+
+Start the server:
+
+```powershell
+npm start
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/
+```
+
+Override host / port if needed:
+
+```powershell
+$env:PORT=18000
+$env:HOST="127.0.0.1"
+npm start
+```
+
+## LLM Setup
+
+LLM-powered extraction and scoring are optional.
+
+Create a local env file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Then set:
+
+```text
+DEEPSEEK_API_KEY=your_key_here
+```
+
+When `DEEPSEEK_API_KEY` is present, the app enables:
+
+- `POST /api/questions/extract`
+- `POST /api/attempts/:id/llm-score`
+- title-level interview classification during NowCoder fetch
+
+Without a key, the manual paste workflows still work.
+
+## Data Storage
+
+Runtime data is stored under `data/` and is intentionally not committed:
+
+- `data/articles/`
+- `data/questions/`
+- `data/attempts/`
+- `data/scores/`
+- `data/cards/`
+- `data/llm/`
+- `data/crawl-cursors/`
+
+## Project Structure
+
+```text
+public/         frontend (vanilla HTML/CSS/JS)
+src/api/        HTTP route handlers
+src/domain/     domain schema and validation rules
+src/llm/        prompt provider, LLM client, evaluation services
+src/sources/    external source adapters (NowCoder)
+src/storage/    JSON / JSONL persistence
+scripts/        helper scripts
+tests/          unit, schema, and e2e tests
+data/           local runtime state (gitignored)
+```
+
+## Test Commands
+
+```powershell
+npm test
+npm run test:schema
+npm run test:e2e
+```
+
+## API Overview
+
+- `GET /health`
+- `POST /api/articles/manual`
+- `GET /api/articles`
+- `POST /api/questions/import`
+- `POST /api/questions/extract`
+- `GET /api/questions`
+- `PATCH /api/questions/:id`
+- `POST /api/questions/purge-ignored`
+- `POST /api/attempts`
+- `GET /api/attempts`
+- `POST /api/attempts/:id/score`
+- `POST /api/attempts/:id/llm-score`
+- `POST /api/cards/from-attempt`
+- `GET /api/cards`
+- `POST /api/sources/nowcoder/fetch`
+
+## Engineering Constraints
+
+- No database / ORM
+- No authentication system
+- Attempts and scores are append-only
+- Cards are only written through `POST /api/cards/from-attempt`
+- Invalid LLM output is preserved in `data/llm/` for debugging instead of being silently dropped
+
