@@ -21,6 +21,7 @@ export function createScoringApi({
   scoreStore,
   llmDebugStore,
   questionStore = null,
+  cardStore = null,
   llmService = null,
   now = nowIso
 }) {
@@ -156,7 +157,17 @@ export function createScoringApi({
       }
 
       const questions = await questionStore.list();
-      const question = questions.find((q) => q.id === attempt.questionId);
+      let question = questions.find((q) => q.id === attempt.questionId);
+      if (!question && cardStore) {
+        const card = await cardStore.getById(attempt.questionId);
+        if (card) {
+          question = {
+            id: card.id,
+            question: card.question ?? card.title ?? "",
+            evidence: card.feedback?.retryInstruction ?? ""
+          };
+        }
+      }
       if (!question) {
         throw new ValidationError(`question "${attempt.questionId}" not found`, {
           code: "QUESTION_NOT_FOUND",

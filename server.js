@@ -124,6 +124,7 @@ export function createAppServer({
     scoreStore,
     llmDebugStore,
     questionStore,
+    cardStore,
     llmService: resolvedLlmService
   });
   const cardsApi = createCardsApi({ questionStore, attemptStore, scoreStore, cardStore });

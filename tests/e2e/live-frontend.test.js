@@ -379,6 +379,60 @@ test("clicking the 卡片库 link renders saved cards from /api/cards", async ()
   assert.match(renderedCards[0].textContent, /7\.4 \/ 10/);
 });
 
+test("clicking a saved card opens review with answer and feedback, and still allows retrying", async () => {
+  const cards = [
+    {
+      id: "mysql-saved-1",
+      title: "已保存的 MySQL 卡片",
+      count: 0,
+      category: "MySQL",
+      tags: ["MySQL"],
+      difficulty: "medium",
+      createdAt: "2026-05-04",
+      updatedAt: "2026-05-05",
+      question: "慢 SQL 怎么排查？",
+      myAnswer: "先看慢日志，再看执行计划。",
+      feedbackPromptVersion: "interview-coach-v2",
+      feedback: {
+        performanceScore: {
+          scores: validSummary.scores,
+          overallComment: "已保存卡片评语"
+        },
+        primaryTechnicalGap: "tech-gap",
+        primaryExpressionGap: "expr-gap",
+        engineeringMindsetGap: "eng-gap",
+        retryInstruction: "retry-instruction"
+      }
+    }
+  ];
+  const sim = buildSim({ questions: baseQuestions, cards });
+  const dom = await buildAppDom({ fetch: sim.fetch });
+  await flushDom(dom, 6);
+  const { document } = dom.window;
+
+  document.querySelector('[data-view-link="cards"]').click();
+  await flushDom(dom, 6);
+  document.querySelector("[data-cards-grid] [data-card-id]").click();
+  await flushDom(dom, 6);
+
+  assert.equal(document.querySelector('[data-view="practice"]').hidden, false);
+  assert.equal(document.querySelector("[data-question-title]").textContent, "慢 SQL 怎么排查？");
+  assert.equal(document.querySelector("[data-answer-input]").value, "先看慢日志，再看执行计划。");
+  assert.equal(document.querySelector("[data-answer-input]").readOnly, false);
+  assert.match(document.querySelector("[data-overall-comment]").textContent, /已保存卡片评语/);
+
+  document.querySelector("[data-answer-input]").value = "新的重答";
+  document.querySelector("[data-save-attempt]").click();
+  await flushDom(dom, 6);
+
+  const attemptPost = sim.calls.find(
+    (c) => c.method === "POST" && c.url === "/api/attempts"
+  );
+  assert.ok(attemptPost);
+  assert.equal(JSON.parse(attemptPost.body).questionId, "mysql-saved-1");
+  assert.equal(JSON.parse(attemptPost.body).answer, "新的重答");
+});
+
 test('header "导入文章" button switches to the manual paste panel', async () => {
   const sim = buildSim({ questions: baseQuestions });
   const dom = await buildAppDom({ fetch: sim.fetch });

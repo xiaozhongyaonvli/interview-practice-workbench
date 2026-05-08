@@ -1,8 +1,8 @@
 // Step 9 e2e: frontend LLM scoring hooks.
 //
-// The old "call LLM extraction from an article preview" UI was removed in the
-// feed refactor. Extraction now happens inside /api/sources/nowcoder/fetch,
-// while this page keeps the manual JSON import rescue lane and LLM scoring.
+// The old JSON-based manual question import UI was removed. These tests now
+// use the current direct manual-entry flow, and also cover retrying LLM score
+// from a saved card review.
 
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -29,17 +29,14 @@ function buildSim({ llmScoreResp }) {
     const parsed = new URL(String(url), "http://127.0.0.1/");
 
     if (parsed.pathname === "/api/questions" && method === "GET") {
-      const q = parsed.searchParams.get("query");
-      const list = q ? questions.filter((x) => x.query === q) : questions.slice();
       return ok({
-        questions: list,
-        meta: { total: questions.length, filtered: list.length, categories: [], statuses: [] }
+        questions: questions.slice(),
+        meta: { total: questions.length, filtered: questions.length, categories: [], statuses: [] }
       });
     }
     if (parsed.pathname === "/api/questions/import" && method === "POST") {
       const body = JSON.parse(options.body ?? "{}");
-      const parsedBody = JSON.parse(body.rawResponse);
-      const added = parsedBody.questions.map((q, i) => ({
+      const added = (body.extraction?.questions ?? []).map((q, i) => ({
         id: `pasted-${questions.length + i}`,
         question: q.question,
         category: q.category,
@@ -50,7 +47,7 @@ function buildSim({ llmScoreResp }) {
         sourceTitle: null,
         evidence: q.evidence ?? null,
         query: body.query,
-        confidence: q.confidence,
+        confidence: q.confidence ?? 1,
         status: "candidate",
         createdAt: "2026-05-04",
         updatedAt: "2026-05-04"
@@ -118,21 +115,12 @@ const validSummary = {
   retryInstruction: "answer by discovery, location, analysis, verification"
 };
 
-async function seedQuestionByManualJson(dom, document) {
+async function seedQuestionByManualEntry(dom, document) {
   document.querySelector('[data-source-tab="extract"]').click();
   const form = document.getElementById("extract-import-form");
-  form.querySelector("[name=query]").value = "mysql";
-  form.querySelector("[name=rawResponse]").value = JSON.stringify({
-    questions: [
-      {
-        question: "How do you diagnose slow SQL online?",
-        category: "MySQL",
-        difficulty: "medium",
-        confidence: 0.86,
-        evidence: "slow SQL"
-      }
-    ]
-  });
+  form.querySelector("[name=category]").value = "MySQL";
+  form.querySelector("[name=question]").value = "How do you diagnose slow SQL online?";
+  form.querySelector("[name=evidence]").value = "slow SQL";
   form.requestSubmit();
   await flushDom(dom, 8);
 }
@@ -152,7 +140,7 @@ test("LLM score success renders feedback card", async () => {
   const dom = await buildAppDom({ fetch: sim.fetch });
   const { document } = dom.window;
 
-  await seedQuestionByManualJson(dom, document);
+  await seedQuestionByManualEntry(dom, document);
   await openQuestionAndSaveAttempt(dom, document);
 
   document.querySelector("[data-llm-score]").click();
@@ -174,7 +162,7 @@ test("LLM score failure leaves attempt intact and the user can still paste JSON"
   const dom = await buildAppDom({ fetch: sim.fetch });
   const { document } = dom.window;
 
-  await seedQuestionByManualJson(dom, document);
+  await seedQuestionByManualEntry(dom, document);
   await openQuestionAndSaveAttempt(dom, document);
 
   document.querySelector("[data-llm-score]").click();
@@ -185,4 +173,63 @@ test("LLM score failure leaves attempt intact and the user can still paste JSON"
   assert.match(status.textContent, /可改用粘贴 JSON/);
   assert.equal(sim.attempts.length, 1);
   assert.equal(sim.scores.length, 0);
+});
+
+test("LLM score still works when retrying from a saved card whose source question is gone", async () => {
+  const cards = [
+    {
+      id: "mysql-card-1",
+      title: "已保存卡片",
+      count: 0,
+      category: "MySQL",
+      tags: ["MySQL"],
+      difficulty: "medium",
+      createdAt: "2026-05-04",
+      updatedAt: "2026-05-05",
+      question: "How do you diagnose slow SQL online?",
+      myAnswer: "old answer",
+      feedbackPromptVersion: "interview-coach-v2",
+      feedback: {
+        performanceScore: {
+          scores: validSummary.scores,
+          overallComment: "old review"
+        },
+        retryInstruction: "answer by discovery, location, analysis, verification"
+      }
+    }
+  ];
+  const sim = buildSim({
+    llmScoreResp: { status: 201, body: { summary: validSummary, attemptId: "x" } }
+  });
+  sim.fetch = ((originalFetch) => (url, options = {}) => {
+    const method = (options.method ?? "GET").toUpperCase();
+    const parsed = new URL(String(url), "http://127.0.0.1/");
+    if (parsed.pathname === "/api/cards" && method === "GET") {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ cards }),
+        text: () => Promise.resolve(JSON.stringify({ cards }))
+      });
+    }
+    return originalFetch(url, options);
+  })(sim.fetch);
+
+  const dom = await buildAppDom({ fetch: sim.fetch });
+  const { document } = dom.window;
+
+  document.querySelector('[data-view-link="cards"]').click();
+  await flushDom(dom, 6);
+  document.querySelector("[data-cards-grid] [data-card-id]").click();
+  await flushDom(dom, 6);
+
+  document.querySelector("[data-answer-input]").value = "new retry answer";
+  document.querySelector("[data-save-attempt]").click();
+  await flushDom(dom, 6);
+  document.querySelector("[data-llm-score]").click();
+  await flushDom(dom, 8);
+
+  const status = document.querySelector("[data-attempt-status]");
+  assert.equal(status.dataset.sourceStatusTone, "ok");
+  assert.match(status.textContent, /LLM 评分通过校验/);
 });

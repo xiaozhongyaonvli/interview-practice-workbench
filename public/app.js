@@ -13,6 +13,7 @@ let currentQuestionId = null;
 let currentQuestion = null;
 let lastAttemptId = null;
 let bestAttemptForSave = null;
+let currentCardReview = null;
 
 // User can filter the question grid by sidebar category and a search keyword.
 // "" means "all categories"; the search box matches question text + tags + source.
@@ -23,6 +24,7 @@ let lastKnownQuery = "__feed__";
 // update without a second round-trip.
 let lastQuestionsResponse = { questions: [], meta: null };
 let lastAttemptsByQuestion = new Map(); // questionId -> attempts[]
+let lastCardsResponse = [];
 
 // ---------------------------------------------------------------------------
 // Frontend persistence (localStorage)
@@ -179,6 +181,14 @@ document.addEventListener("click", (event) => {
   const card = trigger.closest("[data-question-id]");
   const id = card?.dataset.questionId ?? null;
   showView("practice", { questionId: id });
+});
+
+document.addEventListener("click", (event) => {
+  const trigger = event.target.closest?.("[data-card-id]");
+  if (!trigger) return;
+  const id = trigger.dataset.cardId ?? null;
+  if (!id) return;
+  openCardReview(id);
 });
 
 // ---------------------------------------------------------------------------
@@ -668,6 +678,7 @@ function renderPracticeQuestion(q) {
     if (answerInput) answerInput.value = "";
     return;
   }
+  if (answerInput) answerInput.readOnly = false;
   if (meta)
     meta.textContent = `${q.category} · ${statusLabelZh(q.status)} · Practice Mode`;
   if (title) title.textContent = q.question;
@@ -684,6 +695,79 @@ function renderPracticeQuestion(q) {
     quality.textContent = (q.confidence ?? 0) >= 0.7 ? "可练" : "需确认";
   }
   if (answerInput) answerInput.value = "";
+}
+
+function summaryFromCard(card) {
+  const feedback = card?.feedback ?? {};
+  const performance = feedback.performanceScore ?? {};
+  return {
+    scores: performance.scores ?? {},
+    overallComment: performance.overallComment ?? "",
+    primaryTechnicalGap: feedback.primaryTechnicalGap ?? "",
+    primaryExpressionGap: feedback.primaryExpressionGap ?? "",
+    engineeringMindsetGap: feedback.engineeringMindsetGap ?? "",
+    retryInstruction: feedback.retryInstruction ?? "",
+    interviewerReview: feedback.interviewerReview,
+    expressionAnalysis: feedback.expressionAnalysis,
+    technicalAnalysis: feedback.technicalAnalysis,
+    highScoreAnswer: feedback.highScoreAnswer,
+    expressionComparison: feedback.expressionComparison,
+    essence: feedback.essence,
+    followUpQuestions: feedback.followUpQuestions,
+    longTermAdvice: feedback.longTermAdvice
+  };
+}
+
+function renderCardReview(card) {
+  currentCardReview = card ?? null;
+  currentQuestion = card
+    ? {
+        id: card.id,
+        question: card.question ?? card.title ?? "",
+        category: card.category ?? "未分类",
+        status: "mastered",
+        source: "card",
+        sourceTitle: card.title ?? "",
+        confidence: 1,
+        difficulty: card.difficulty ?? "medium"
+      }
+    : null;
+  currentQuestionId = currentQuestion?.id ?? null;
+  setCurrentQuestionIdState(currentQuestionId);
+  renderPracticeQuestion(currentQuestion);
+
+  const answerInput = document.querySelector("[data-answer-input]");
+  if (answerInput) {
+    answerInput.value = card?.myAnswer ?? "";
+    answerInput.readOnly = false;
+  }
+
+  const list = document.querySelector("[data-attempt-list]");
+  if (list && card) {
+    const total = totalScoreClient(summaryFromCard(card));
+    const totalLabel = total === null ? "未评分" : `${total.toFixed(1)} / 10`;
+    const time = escapeHtml(String(card.updatedAt ?? card.createdAt ?? ""));
+    list.innerHTML = `<article class="attempt active best" data-card-review-id="${escapeHtml(card.id)}">
+      <span>Card Review · ${time} · ${totalLabel}</span>
+      <p>${escapeHtml(card.feedback?.performanceScore?.overallComment ?? "已保存卡片回看")}</p>
+      <span class="best-badge">卡片</span>
+    </article>`;
+  }
+
+  lastAttemptId = null;
+  setStatus(attemptStatus, "卡片回看：已预填你当时的回答，可以直接修改后重新作答。", "ok");
+  setStatus(saveStatus, "", null);
+  setStatus(scoreStatus, "", null);
+  setScoreFormVisible(false);
+  updateSavePreview({ question: null, bestAttempt: null });
+  renderFeedback({ summary: summaryFromCard(card) });
+}
+
+function openCardReview(cardId) {
+  const card = lastCardsResponse.find((item) => item?.id === cardId) ?? null;
+  if (!card) return;
+  showView("practice");
+  renderCardReview(card);
 }
 
 async function refreshAttemptHistory(questionId) {
@@ -796,6 +880,7 @@ function selectBestAttemptClient(attempts) {
 }
 
 async function setActivePracticeQuestion(questionId) {
+  currentCardReview = null;
   setCurrentQuestionIdState(questionId);
   if (!questionId) {
     currentQuestion = null;
@@ -1538,8 +1623,9 @@ async function refreshCardsView() {
         </article>`;
       return;
     }
-    const body = await response.json();
-    const cards = body.cards ?? [];
+  const body = await response.json();
+  const cards = body.cards ?? [];
+    lastCardsResponse = cards;
     if (cards.length === 0) {
       grid.innerHTML = `
         <article class="training-card add-card">
