@@ -1,4 +1,4 @@
-// Step 3 e2e: extraction-import flow + question pool rendering + ignore PATCH.
+// Step 3 e2e: manual question entry + question pool rendering + ignore PATCH.
 //
 // As in Step 2, we drive the front-end with a stubbed fetch that simulates
 // the API. The real /api/questions HTTP layer is exercised by
@@ -51,21 +51,10 @@ function createApiSim() {
 
     if (parsed.pathname === "/api/questions/import" && method === "POST") {
       const body = JSON.parse(options.body ?? "{}");
-      let parsedBody;
-      try {
-        parsedBody = JSON.parse(body.rawResponse ?? "");
-      } catch {
-        const err = { error: "rawResponse is not valid JSON", code: "EXTRACTION_NOT_JSON", path: "rawResponse" };
-        return Promise.resolve({
-          ok: false,
-          status: 400,
-          json: () => Promise.resolve(err),
-          text: () => Promise.resolve("")
-        });
-      }
       const added = [];
-      for (let i = 0; i < parsedBody.questions.length; i += 1) {
-        const item = parsedBody.questions[i];
+      const items = Array.isArray(body.extraction?.questions) ? body.extraction.questions : [];
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
         const id = `${body.query}-${i}-${Date.now()}`;
         const record = {
           id,
@@ -145,7 +134,7 @@ const validExtraction = {
   ]
 };
 
-test("clicking the 导入抽题 tab reveals the extraction form", async () => {
+test("clicking the 手动录题 tab reveals the entry form", async () => {
   const sim = createApiSim();
   const dom = await buildAppDom({ fetch: sim.fetch });
   const { document } = dom.window;
@@ -158,7 +147,7 @@ test("clicking the 导入抽题 tab reveals the extraction form", async () => {
   assert.equal(manualPanel.hidden, true);
 });
 
-test("submitting valid LLM extraction JSON populates the question pool", async () => {
+test("submitting a manual question populates the question pool", async () => {
   const sim = createApiSim();
   const dom = await buildAppDom({ fetch: sim.fetch });
   const { document } = dom.window;
@@ -166,8 +155,9 @@ test("submitting valid LLM extraction JSON populates the question pool", async (
   document.querySelector('[data-source-tab="extract"]').click();
 
   const form = document.getElementById("extract-import-form");
-  form.querySelector("[name=query]").value = "mysql";
-  form.querySelector("[name=rawResponse]").value = JSON.stringify(validExtraction);
+  form.querySelector("[name=category]").value = "Redis";
+  form.querySelector("[name=question]").value = "布隆过滤器使用场景";
+  form.querySelector("[name=evidence]").value = "手动录入";
 
   form.requestSubmit();
   await flushDom(dom, 8);
@@ -175,36 +165,84 @@ test("submitting valid LLM extraction JSON populates the question pool", async (
   // Server received exactly one import POST.
   const posts = sim.calls.filter((c) => c.method === "POST" && c.url === "/api/questions/import");
   assert.equal(posts.length, 1);
+  const submitted = JSON.parse(posts[0].body);
+  assert.equal(submitted.query, "mysql");
+  assert.equal(submitted.extraction.questions[0].question, "布隆过滤器使用场景");
 
-  // Two questions were saved.
-  assert.equal(sim.questions.length, 2);
+  // One question was saved.
+  assert.equal(sim.questions.length, 1);
 
   // The grid renders one card per question + a trailing add-card.
   const cards = document.querySelectorAll("[data-question-grid] [data-question-id]");
-  assert.equal(cards.length, 2);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].dataset.questionId, sim.questions[0].id);
 
   // Status banner reflects success summary.
   const status = document.querySelector('[data-source-panel="extract"] [data-source-status]');
   assert.equal(status.dataset.sourceStatusTone, "ok");
-  assert.match(status.textContent, /已导入 2/);
+  assert.match(status.textContent, /已加入 1/);
 });
 
-test("submitting non-JSON rawResponse shows a server-side failure status", async () => {
+test("manual question entry stays in the current query partition instead of switching the pool", async () => {
+  const sim = createApiSim();
+  sim.questions.push({
+    id: "mysql-existing-1",
+    question: "MySQL 索引失效有哪些场景",
+    category: "MySQL",
+    tags: ["MySQL"],
+    difficulty: "medium",
+    source: "nowcoder",
+    sourceUrl: null,
+    sourceTitle: null,
+    evidence: "已有题",
+    query: "mysql",
+    confidence: 0.9,
+    status: "candidate",
+    createdAt: "2026-05-04",
+    updatedAt: "2026-05-04"
+  });
+
+  const dom = await buildAppDom({ fetch: sim.fetch });
+  const { document, localStorage } = dom.window;
+  localStorage.setItem("itw.lastKnownQuery", "mysql");
+
+  document.querySelector('[data-source-tab="extract"]').click();
+  const form = document.getElementById("extract-import-form");
+  form.querySelector("[name=category]").value = "Redis";
+  form.querySelector("[name=question]").value = "布隆过滤器使用场景";
+  form.requestSubmit();
+  await flushDom(dom, 8);
+
+  const posts = sim.calls.filter((c) => c.method === "POST" && c.url === "/api/questions/import");
+  assert.equal(posts.length, 1);
+  const submitted = JSON.parse(posts[0].body);
+  assert.equal(submitted.query, "mysql");
+  assert.equal(submitted.extraction.questions[0].category, "Redis");
+
+  const gets = sim.calls.filter((c) => c.method === "GET" && c.url === "/api/questions");
+  assert.ok(gets.length >= 1);
+
+  const cards = document.querySelectorAll("[data-question-grid] [data-question-id]");
+  assert.equal(cards.length, 2);
+  assert.equal(cards[0].textContent.includes("manual"), true);
+});
+
+test("submitting an empty manual question shows a validation failure status", async () => {
   const sim = createApiSim();
   const dom = await buildAppDom({ fetch: sim.fetch });
   const { document } = dom.window;
 
   document.querySelector('[data-source-tab="extract"]').click();
   const form = document.getElementById("extract-import-form");
-  form.querySelector("[name=query]").value = "mysql";
-  form.querySelector("[name=rawResponse]").value = "not json at all";
+  form.querySelector("[name=category]").value = "MySQL";
+  form.querySelector("[name=question]").value = "";
 
   form.requestSubmit();
   await flushDom(dom, 8);
 
   const status = document.querySelector('[data-source-panel="extract"] [data-source-status]');
   assert.equal(status.dataset.sourceStatusTone, "error");
-  assert.match(status.textContent, /导入失败/);
+  assert.match(status.textContent, /问题不能为空/);
 });
 
 test("clicking 忽略 on a question card sends a PATCH and visually mutes it", async () => {
@@ -212,11 +250,11 @@ test("clicking 忽略 on a question card sends a PATCH and visually mutes it", a
   const dom = await buildAppDom({ fetch: sim.fetch });
   const { document } = dom.window;
 
-  // Seed the question pool via the extraction flow.
+  // Seed the question pool via the manual entry flow.
   document.querySelector('[data-source-tab="extract"]').click();
   const form = document.getElementById("extract-import-form");
-  form.querySelector("[name=query]").value = "mysql";
-  form.querySelector("[name=rawResponse]").value = JSON.stringify(validExtraction);
+  form.querySelector("[name=category]").value = "MySQL";
+  form.querySelector("[name=question]").value = "线上慢 SQL 怎么排查";
   form.requestSubmit();
   await flushDom(dom, 8);
 

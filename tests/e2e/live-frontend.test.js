@@ -422,3 +422,19 @@ test("toolbar 搜索框 + 清除筛选 协同工作", async () => {
     /当前筛选/
   );
 });
+
+test("home question pool ignores stored query partition and renders the full pool", async () => {
+  const sim = buildSim({ questions: baseQuestions });
+  const dom = await buildAppDom({ fetch: sim.fetch });
+  await flushDom(dom, 4);
+  dom.window.localStorage.setItem("itw.lastKnownQuery", "Redis");
+
+  const dom2 = await buildAppDom({ fetch: sim.fetch });
+  await flushDom(dom2, 6);
+  const { document } = dom2.window;
+
+  const cards = document.querySelectorAll("[data-question-grid] [data-question-id]");
+  assert.equal(cards.length, 3);
+  assert.ok(sim.calls.some((c) => c.method === "GET" && c.url === "/api/questions"));
+  assert.ok(!sim.calls.some((c) => c.url === "/api/questions?query=Redis"));
+});

@@ -55,7 +55,7 @@
               <div class="source-tabs" role="tablist">
                 <button class="active" type="button" data-source-tab="manual">手动粘贴</button>
                 <button type="button" data-source-tab="nowcoder">牛客</button>
-                <button type="button" data-source-tab="extract">导入抽题</button>
+                <button type="button" data-source-tab="extract">手动录题</button>
               </div>
 
               <form data-source-panel="manual" class="source-panel" id="manual-import-form" novalidate>
@@ -74,13 +74,21 @@
               </form>
 
               <form data-source-panel="extract" class="source-panel" id="extract-import-form" hidden novalidate>
-                <input name="query" value="mysql" placeholder="方向关键词" aria-label="方向关键词" required>
-                <textarea name="rawResponse" placeholder="粘贴 LLM 抽题 JSON,例如 {&quot;questions&quot;:[...]}" aria-label="抽题 JSON"></textarea>
+                <select name="category" aria-label="问题方向" required>
+                  <option value="MySQL">MySQL</option>
+                  <option value="Redis">Redis</option>
+                  <option value="Java">Java</option>
+                  <option value="计网">计网</option>
+                  <option value="计组">计组</option>
+                  <option value="Agent">Agent</option>
+                </select>
+                <textarea name="question" placeholder="直接输入题目，例如：布隆过滤器使用场景" aria-label="问题内容" required></textarea>
+                <input name="evidence" placeholder="可选：备注来源、追问点或你为什么想练这题">
                 <p class="source-status" data-source-status hidden></p>
                 <div class="answer-actions">
-                  <button class="primary" type="submit">导入到问题池</button>
+                  <button class="primary" type="submit">加入问题池</button>
                 </div>
-                <p class="source-hint">兜底入口: 当自动抽题失败时,可手动粘贴 JSON 把问题导入。</p>
+                <p class="source-hint">直接选方向并输入问题即可，不需要粘贴 JSON。</p>
               </form>
             </div>
           </aside>
@@ -109,8 +117,8 @@
             <div class="card-grid" data-question-grid>
               <article class="training-card add-card" data-add-card>
                 <strong>+</strong>
-                <h4>导入抽题以填充问题池</h4>
-                <p>侧栏 "导入抽题" tab 粘贴 LLM JSON,即可生成候选问题。</p>
+                <h4>手动录题以填充问题池</h4>
+                <p>侧栏“手动录题”里直接选择方向并输入问题即可。</p>
               </article>
             </div>
           </section>

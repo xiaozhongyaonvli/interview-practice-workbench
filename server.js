@@ -256,7 +256,10 @@ export function createAppServer({
     try {
       const body = await readFile(filePath);
       const type = contentTypes[extname(filePath)] ?? "application/octet-stream";
-      res.writeHead(200, { "content-type": type });
+      res.writeHead(200, {
+        "content-type": type,
+        "cache-control": "no-store"
+      });
       res.end(body);
     } catch (error) {
       if (error?.code === "ENOENT") {

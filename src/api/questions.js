@@ -18,6 +18,8 @@ import { readJsonBody, sendJson, sendError } from "./http.js";
 // while still rejecting path separators, shell metachars, and whitespace.
 const SAFE_QUERY = /^[\p{L}\p{N}_-]{1,64}$/u;
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
+const DEFAULT_MANUAL_DIFFICULTY = "medium";
+const DEFAULT_MANUAL_CONFIDENCE = 1;
 
 function requireString(value, field, code = "QUESTION_INPUT_INVALID") {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -30,6 +32,26 @@ function requireString(value, field, code = "QUESTION_INPUT_INVALID") {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function normalizeSingleQuestionInput(body) {
+  if (body.extraction !== undefined || body.rawResponse !== undefined) return body;
+  if (typeof body.question !== "string") return body;
+
+  return {
+    ...body,
+    extraction: {
+      questions: [
+        {
+          question: body.question,
+          category: body.category ?? body.query,
+          difficulty: body.difficulty ?? DEFAULT_MANUAL_DIFFICULTY,
+          evidence: body.evidence ?? null,
+          confidence: body.confidence ?? DEFAULT_MANUAL_CONFIDENCE
+        }
+      ]
+    }
+  };
 }
 
 // Best-effort purge of status=ignored from the pool. Used at write-side
@@ -53,7 +75,8 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
 
   async function handleImport(req, res) {
     try {
-      const body = await readJsonBody(req);
+      const rawBody = await readJsonBody(req);
+      const body = normalizeSingleQuestionInput(rawBody);
 
       requireString(body.query, "query");
       if (!SAFE_QUERY.test(body.query)) {

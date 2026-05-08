@@ -81,6 +81,31 @@ test("POST /api/questions/import with a rawResponse string parses and adds quest
   }
 });
 
+test("POST /api/questions/import accepts a single manual question without JSON extraction payload", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const response = await importBody(baseUrl, {
+        query: "Redis",
+        category: "Redis",
+        source: "manual",
+        question: "布隆过滤器使用场景",
+        evidence: "手动录题"
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.added.length, 1);
+      assert.equal(body.added[0].question, "布隆过滤器使用场景");
+      assert.equal(body.added[0].category, "Redis");
+      assert.equal(body.added[0].query, "Redis");
+      assert.equal(body.added[0].confidence, 1);
+      assert.equal(body.added[0].difficulty, "medium");
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
 test("POST /api/questions/import with non-JSON rawResponse returns 400 AND saves the raw to llm debug log", async () => {
   const baseDir = await makeBase();
   try {

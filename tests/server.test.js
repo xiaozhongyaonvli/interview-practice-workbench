@@ -31,9 +31,20 @@ test("serves the app shell", async () => {
     const body = await response.text();
 
     assert.equal(response.status, 200);
-    assert.match(body, /题目库/);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     assert.match(body, /data-view="home"/);
     assert.match(body, /data-view="practice" hidden/);
+  });
+});
+
+test("serves app.js with no-store cache control", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/app.js`);
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.match(body, /async function refreshQuestionPool/);
   });
 });
 
@@ -42,7 +53,7 @@ test("static files exist", async () => {
   const script = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
 
-  assert.match(html, /面经训练台/);
+  assert.match(html, /data-view="home"/);
   assert.match(script, /function showView/);
   assert.match(styles, /\.screen\[hidden\]/);
 });

@@ -193,12 +193,12 @@ document.querySelector("[data-header-import]")?.addEventListener("click", () => 
 });
 
 document.querySelector("[data-header-new-card]")?.addEventListener("click", () => {
-  // "新建训练卡片" in the header == 同 toolbar 的 + 新建,跳到导入抽题面板
+  // "新建训练卡片" in the header == 同 toolbar 的 + 新建,跳到手动录题面板
   // 因为 Phase A 不允许凭空写卡片,必须先有问题 + attempt + 评分。
   showView("home");
   showSourcePanel("extract");
   document.getElementById("extract-import-form")
-    ?.querySelector("[name=rawResponse]")
+    ?.querySelector("[name=question]")
     ?.focus();
 });
 
@@ -265,7 +265,7 @@ if (importForm) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: question pool (extraction import + render + ignore action)
+// Step 3: question pool (manual question entry + render + ignore action)
 // ---------------------------------------------------------------------------
 
 const extractForm = document.getElementById("extract-import-form");
@@ -283,20 +283,34 @@ function applyFilters(questions) {
   });
 }
 
+function sortQuestionsForGrid(questions) {
+  return [...questions].sort((a, b) => {
+    const aManual = a?.source === "manual" ? 1 : 0;
+    const bManual = b?.source === "manual" ? 1 : 0;
+    if (aManual !== bManual) return bManual - aManual;
+
+    const aTime = Date.parse(a?.updatedAt ?? a?.createdAt ?? "") || 0;
+    const bTime = Date.parse(b?.updatedAt ?? b?.createdAt ?? "") || 0;
+    if (aTime !== bTime) return bTime - aTime;
+
+    return String(a?.id ?? "").localeCompare(String(b?.id ?? ""));
+  });
+}
+
 function renderQuestionGrid(questions) {
   const grid = document.querySelector("[data-question-grid]");
   if (!grid) return;
-  const filtered = applyFilters(questions);
+  const filtered = sortQuestionsForGrid(applyFilters(questions));
 
   if (filtered.length === 0) {
     grid.innerHTML = `
       <article class="training-card add-card" data-add-card>
         <strong>+</strong>
-        <h4>${activeCategory || activeSearch ? "当前筛选下没有问题" : "导入抽题以填充问题池"}</h4>
+        <h4>${activeCategory || activeSearch ? "当前筛选下没有问题" : "手动录题以填充问题池"}</h4>
         <p>${
           activeCategory || activeSearch
             ? '试试切换"全部"分类或清空搜索框。'
-            : '侧栏 "导入抽题" tab 粘贴 LLM JSON,即可生成候选问题。'
+            : '侧栏“手动录题”里直接选择方向并输入问题即可。'
         }</p>
       </article>`;
     return;
@@ -340,8 +354,8 @@ function renderQuestionGrid(questions) {
   cards.push(`
     <article class="training-card add-card" data-add-card>
       <strong>+</strong>
-      <h4>继续导入抽题</h4>
-      <p>粘贴更多 LLM JSON 扩展问题池。</p>
+      <h4>继续手动录题</h4>
+      <p>继续补充你想练的问题。</p>
     </article>`);
 
   grid.innerHTML = cards.join("");
@@ -383,10 +397,8 @@ function renderToolbarSummary(questions) {
 }
 
 async function refreshQuestionPool(query) {
-  if (!query) query = lastKnownQuery;
-  lastKnownQuery = query;
   try {
-    const response = await fetch(`/api/questions?query=${encodeURIComponent(query)}`);
+    const response = await fetch("/api/questions");
     if (!response.ok) {
       lastQuestionsResponse = { questions: [], meta: null };
       renderQuestionGrid([]);
@@ -412,20 +424,39 @@ if (extractForm) {
     event.preventDefault();
     setStatus(extractStatus, "", null);
     const data = new FormData(extractForm);
-    const query = String(data.get("query") ?? "").trim();
-    const rawResponse = String(data.get("rawResponse") ?? "");
-    if (!query) return setStatus(extractStatus, "方向不能为空", "error");
-    if (!rawResponse.trim()) return setStatus(extractStatus, "抽题 JSON 不能为空", "error");
+    const queryPartition =
+      typeof lastKnownQuery === "string" && lastKnownQuery.trim().length > 0
+        ? lastKnownQuery.trim()
+        : "__feed__";
+    const category = String(data.get("category") ?? "").trim();
+    const question = String(data.get("question") ?? "").trim();
+    const evidence = String(data.get("evidence") ?? "").trim();
+    if (!category) return setStatus(extractStatus, "方向不能为空", "error");
+    if (!question) return setStatus(extractStatus, "问题不能为空", "error");
 
     try {
       const response = await fetch("/api/questions/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query, source: "manual", rawResponse })
+        body: JSON.stringify({
+          query: queryPartition,
+          source: "manual",
+          extraction: {
+            questions: [
+              {
+                question,
+                category,
+                difficulty: "medium",
+                evidence: evidence || undefined,
+                confidence: 1
+              }
+            ]
+          }
+        })
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        setStatus(extractStatus, `导入失败: ${body?.error ?? `HTTP ${response.status}`}`, "error");
+        setStatus(extractStatus, `录入失败: ${body?.error ?? `HTTP ${response.status}`}`, "error");
         return;
       }
       const purgedNote =
@@ -434,20 +465,20 @@ if (extractForm) {
           : "";
       setStatus(
         extractStatus,
-        `已导入 ${body.added.length} 条 · 重复 ${body.duplicates.length} · 错误 ${body.errors.length}${purgedNote}`,
+        `已加入 ${body.added.length} 条 · 重复 ${body.duplicates.length} · 错误 ${body.errors.length}${purgedNote}`,
         body.added.length > 0 ? "ok" : "error"
       );
-      extractForm.querySelector("[name=rawResponse]").value = "";
-      setLastKnownQuery(query);
-      await refreshQuestionPool(query);
+      extractForm.querySelector("[name=question]").value = "";
+      extractForm.querySelector("[name=evidence]").value = "";
+      await refreshQuestionPool(lastKnownQuery);
     } catch (error) {
-      setStatus(extractStatus, `导入失败: ${error?.message ?? error}`, "error");
+      setStatus(extractStatus, `录入失败: ${error?.message ?? error}`, "error");
     }
   });
 }
 
-// Automatic extraction now happens inside
-// /api/sources/nowcoder/fetch. Manual JSON paste remains as a fallback.
+// Automatic extraction now happens inside /api/sources/nowcoder/fetch.
+// The sidebar extract panel is repurposed as direct manual question entry.
 
 // Delegated PATCH handler for question triage actions.
 document.addEventListener("click", async (event) => {
@@ -543,7 +574,7 @@ if (newQuestionBtn) {
   newQuestionBtn.addEventListener("click", () => {
     showSourcePanel("extract");
     document.getElementById("extract-import-form")
-      ?.querySelector("[name=rawResponse]")
+      ?.querySelector("[name=question]")
       ?.focus();
   });
 }
@@ -616,19 +647,12 @@ async function refreshMetricStrip(questions) {
 // ---------------------------------------------------------------------------
 
 async function fetchQuestionById(id) {
-  // The pool fetch by `lastKnownQuery` is the natural place to find the
-  // question. If we cannot locate it under that query, widen by trying with
-  // no filter as a fallback.
   try {
-    const queries = [lastKnownQuery, ""];
-    for (const q of queries) {
-      const url = q ? `/api/questions?query=${encodeURIComponent(q)}` : "/api/questions";
-      const response = await fetch(url);
-      if (!response.ok) continue;
-      const body = await response.json();
-      const found = (body.questions ?? []).find((row) => row.id === id);
-      if (found) return found;
-    }
+    const response = await fetch("/api/questions");
+    if (!response.ok) return null;
+    const body = await response.json();
+    const found = (body.questions ?? []).find((row) => row.id === id);
+    if (found) return found;
   } catch (error) {
     console.warn("fetchQuestionById failed", error);
   }
@@ -1597,4 +1621,3 @@ async function refreshCardsView() {
     showView("home");
   }
 })();
-
