@@ -100,5 +100,34 @@ export function createAttemptApi({ attemptStore, scoreStore = null, now = nowIso
     }
   }
 
-  return { handleCreate, handleList };
+  async function handleDelete(req, res, attemptId) {
+    try {
+      requireString(attemptId, "attemptId");
+      if (!SAFE_ID.test(attemptId)) {
+        throw new ValidationError("attemptId must contain only A-Za-z0-9_-", {
+          code: "ATTEMPT_INPUT_INVALID",
+          path: "attemptId"
+        });
+      }
+      const removedAttempt = await attemptStore.remove(attemptId);
+      if (!removedAttempt?.removed) {
+        throw new ValidationError(`attempt "${attemptId}" not found`, {
+          code: "ATTEMPT_NOT_FOUND",
+          path: "attemptId"
+        });
+      }
+      const removedScores = scoreStore
+        ? await scoreStore.removeByAttemptId(attemptId)
+        : { removedCount: 0 };
+      sendJson(res, 200, {
+        ok: true,
+        attemptId,
+        removedScores: removedScores?.removedCount ?? 0
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+
+  return { handleCreate, handleList, handleDelete };
 }

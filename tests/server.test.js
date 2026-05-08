@@ -57,3 +57,55 @@ test("static files exist", async () => {
   assert.match(script, /function showView/);
   assert.match(styles, /\.screen\[hidden\]/);
 });
+
+test("health check reports llmConfigured when generic GPT-compatible env is present", async () => {
+  const previous = {
+    LLM_API_KEY: process.env.LLM_API_KEY,
+    LLM_BASE_URL: process.env.LLM_BASE_URL,
+    LLM_MODEL: process.env.LLM_MODEL,
+    LLM_API_STYLE: process.env.LLM_API_STYLE
+  };
+  process.env.LLM_API_KEY = "fake-key";
+  process.env.LLM_BASE_URL = "https://www.dogapi.cc/v1";
+  process.env.LLM_MODEL = "gpt-5.2";
+  process.env.LLM_API_STYLE = "responses";
+  try {
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/health`);
+      const payload = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(payload.llmConfigured, true);
+    });
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("health check reports llmConfigured when dashscope-compatible env is present", async () => {
+  const previous = {
+    LLM_API_KEY: process.env.LLM_API_KEY,
+    LLM_BASE_URL: process.env.LLM_BASE_URL,
+    LLM_MODEL: process.env.LLM_MODEL,
+    LLM_API_STYLE: process.env.LLM_API_STYLE
+  };
+  process.env.LLM_API_KEY = "fake-key";
+  process.env.LLM_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+  process.env.LLM_MODEL = "qwen-plus";
+  process.env.LLM_API_STYLE = "chat_completions";
+  try {
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/health`);
+      const payload = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(payload.llmConfigured, true);
+    });
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});

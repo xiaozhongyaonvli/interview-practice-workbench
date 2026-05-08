@@ -14,6 +14,8 @@ let currentQuestion = null;
 let lastAttemptId = null;
 let bestAttemptForSave = null;
 let currentCardReview = null;
+let currentAttemptHistory = [];
+let selectedAttemptId = null;
 
 // User can filter the question grid by sidebar category and a search keyword.
 // "" means "all categories"; the search box matches question text + tags + source.
@@ -718,6 +720,49 @@ function summaryFromCard(card) {
   };
 }
 
+function formatAttemptTime(value) {
+  return escapeHtml(String(value ?? "").slice(0, 16).replace("T", " "));
+}
+
+function getAttemptById(attemptId) {
+  return currentAttemptHistory.find((item) => item?.attemptId === attemptId) ?? null;
+}
+
+function selectDefaultAttempt(attempts) {
+  const best = selectBestAttemptClient(attempts);
+  if (best) return best;
+  const sorted = attempts.slice().sort((a, b) =>
+    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""))
+  );
+  return sorted[0] ?? null;
+}
+
+function renderAttemptIntoEditor(attempt) {
+  const answerInput = document.querySelector("[data-answer-input]");
+  if (answerInput) {
+    answerInput.value = attempt?.answer ?? "";
+    answerInput.readOnly = false;
+  }
+  selectedAttemptId = attempt?.attemptId ?? null;
+  lastAttemptId = attempt?.attemptId ?? null;
+  if (attempt?.summary) {
+    renderFeedback({ summary: attempt.summary });
+  } else {
+    clearFeedbackCard();
+  }
+}
+
+function renderCardSnapshotIntoEditor(card) {
+  const answerInput = document.querySelector("[data-answer-input]");
+  if (answerInput) {
+    answerInput.value = card?.myAnswer ?? "";
+    answerInput.readOnly = false;
+  }
+  selectedAttemptId = null;
+  lastAttemptId = null;
+  renderFeedback({ summary: summaryFromCard(card) });
+}
+
 function renderCardReview(card) {
   currentCardReview = card ?? null;
   currentQuestion = card
@@ -735,32 +780,14 @@ function renderCardReview(card) {
   currentQuestionId = currentQuestion?.id ?? null;
   setCurrentQuestionIdState(currentQuestionId);
   renderPracticeQuestion(currentQuestion);
-
-  const answerInput = document.querySelector("[data-answer-input]");
-  if (answerInput) {
-    answerInput.value = card?.myAnswer ?? "";
-    answerInput.readOnly = false;
-  }
-
-  const list = document.querySelector("[data-attempt-list]");
-  if (list && card) {
-    const total = totalScoreClient(summaryFromCard(card));
-    const totalLabel = total === null ? "未评分" : `${total.toFixed(1)} / 10`;
-    const time = escapeHtml(String(card.updatedAt ?? card.createdAt ?? ""));
-    list.innerHTML = `<article class="attempt active best" data-card-review-id="${escapeHtml(card.id)}">
-      <span>Card Review · ${time} · ${totalLabel}</span>
-      <p>${escapeHtml(card.feedback?.performanceScore?.overallComment ?? "已保存卡片回看")}</p>
-      <span class="best-badge">卡片</span>
-    </article>`;
-  }
-
-  lastAttemptId = null;
+  currentAttemptHistory = [];
+  selectedAttemptId = null;
+  renderCardSnapshotIntoEditor(card);
   setStatus(attemptStatus, "卡片回看：已预填你当时的回答，可以直接修改后重新作答。", "ok");
   setStatus(saveStatus, "", null);
   setStatus(scoreStatus, "", null);
   setScoreFormVisible(false);
   updateSavePreview({ question: null, bestAttempt: null });
-  renderFeedback({ summary: summaryFromCard(card) });
 }
 
 function openCardReview(cardId) {
@@ -768,6 +795,9 @@ function openCardReview(cardId) {
   if (!card) return;
   showView("practice");
   renderCardReview(card);
+  refreshAttemptHistory(card.id).catch((error) => {
+    console.warn("openCardReview refreshAttemptHistory failed", error);
+  });
 }
 
 async function refreshAttemptHistory(questionId) {
@@ -782,33 +812,43 @@ async function refreshAttemptHistory(questionId) {
     }
     const body = await response.json();
     const attempts = body.attempts ?? [];
+    currentAttemptHistory = attempts.slice();
     if (attempts.length === 0) {
-      list.innerHTML =
-        '<p class="imported-empty">还没有作答记录。保存第一版回答后这里会出现历史。</p>';
-      lastAttemptId = null;
+      if (currentCardReview) {
+        const total = totalScoreClient(summaryFromCard(currentCardReview));
+        const totalLabel = total === null ? "未评分" : `${total.toFixed(1)} / 10`;
+        const time = escapeHtml(String(currentCardReview.updatedAt ?? currentCardReview.createdAt ?? ""));
+        list.innerHTML = `<article class="attempt active best" data-card-review-id="${escapeHtml(currentCardReview.id)}">
+          <span>Card Snapshot · ${time} · ${totalLabel}</span>
+          <p>${escapeHtml(currentCardReview.feedback?.performanceScore?.overallComment ?? "已保存卡片回看")}</p>
+          <span class="best-badge">卡片</span>
+        </article>`;
+        renderCardSnapshotIntoEditor(currentCardReview);
+      } else {
+        list.innerHTML =
+          '<p class="imported-empty">还没有作答记录。保存第一版回答后这里会出现历史。</p>';
+        lastAttemptId = null;
+        selectedAttemptId = null;
+        clearFeedbackCard();
+      }
       updateSavePreview({ question: currentQuestion, bestAttempt: null });
       return;
     }
     const sorted = attempts.slice().reverse();
-    lastAttemptId = sorted[0]?.attemptId ?? null;
-    if (sorted[0]?.summary) {
-      renderFeedback({ summary: sorted[0].summary });
-    } else {
-      clearFeedbackCard();
-    }
-
     const bestAttempt = selectBestAttemptClient(attempts);
+    const defaultAttempt =
+      getAttemptById(selectedAttemptId) ?? selectDefaultAttempt(attempts);
+    renderAttemptIntoEditor(defaultAttempt);
     updateSavePreview({ question: currentQuestion, bestAttempt });
 
     list.innerHTML = sorted
       .map((a, i) => {
         const orderFromOldest = sorted.length - i;
-        const time = escapeHtml(
-          String(a.createdAt ?? "").slice(0, 16).replace("T", " ")
-        );
+        const time = formatAttemptTime(a.createdAt);
         const total = totalScoreClient(a.summary);
         const totalLabel = total === null ? "未评分" : `${total.toFixed(1)} / 10`;
         const isBest = bestAttempt && a.attemptId === bestAttempt.attemptId;
+        const isActive = defaultAttempt && a.attemptId === defaultAttempt.attemptId;
         const previous = sorted[i + 1];
         const prevTotal = previous ? totalScoreClient(previous.summary) : null;
         const delta =
@@ -824,7 +864,7 @@ async function refreshAttemptHistory(questionId) {
         const summary =
           a.summary?.overallComment ??
           (a.status === "scored" ? "已评分" : "未评分");
-        const klass = ["attempt", i === 0 ? "active" : "", isBest ? "best" : ""]
+        const klass = ["attempt", isActive ? "active" : "", isBest ? "best" : ""]
           .filter(Boolean)
           .join(" ");
         const bestBadge = isBest
@@ -833,7 +873,10 @@ async function refreshAttemptHistory(questionId) {
         return `<article class="${klass}" data-attempt-id="${escapeHtml(a.attemptId)}">
           <span>Attempt ${orderFromOldest} · ${time} · ${totalLabel} ${deltaLabel}</span>
           <p>${escapeHtml(summary)}</p>
-          ${bestBadge}
+          <div class="card-action-row">
+            ${bestBadge}
+            <button class="ghost" type="button" data-attempt-delete="${escapeHtml(a.attemptId)}">删除</button>
+          </div>
         </article>`;
       })
       .join("");
@@ -881,6 +924,8 @@ function selectBestAttemptClient(attempts) {
 
 async function setActivePracticeQuestion(questionId) {
   currentCardReview = null;
+  currentAttemptHistory = [];
+  selectedAttemptId = null;
   setCurrentQuestionIdState(questionId);
   if (!questionId) {
     currentQuestion = null;
@@ -986,7 +1031,59 @@ document.querySelector("[data-new-attempt]")?.addEventListener("click", () => {
       /* jsdom focus may throw */
     }
   }
+  selectedAttemptId = null;
+  lastAttemptId = null;
   setStatus(attemptStatus, "", null);
+});
+
+document.addEventListener("click", async (event) => {
+  const deleteBtn = event.target.closest?.("[data-attempt-delete]");
+  if (deleteBtn) {
+    event.stopPropagation();
+    const attemptId = deleteBtn.dataset.attemptDelete ?? "";
+    if (!attemptId) return;
+    const ok = window.confirm
+      ? window.confirm("确认删除这次回答及其评分记录？该操作不可撤销。")
+      : true;
+    if (!ok) return;
+    try {
+      const response = await fetch(`/api/attempts/${encodeURIComponent(attemptId)}`, {
+        method: "DELETE"
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        setStatus(
+          attemptStatus,
+          `删除失败: ${body?.error ?? `HTTP ${response.status}`}`,
+          "error"
+        );
+        return;
+      }
+      if (selectedAttemptId === attemptId) {
+        selectedAttemptId = null;
+        lastAttemptId = null;
+      }
+      setStatus(attemptStatus, "已删除该次回答", "ok");
+      if (currentQuestionId) {
+        await refreshAttemptHistory(currentQuestionId);
+      }
+    } catch (error) {
+      setStatus(attemptStatus, `删除失败: ${error?.message ?? error}`, "error");
+    }
+    return;
+  }
+
+  const attemptCard = event.target.closest?.("[data-attempt-id]");
+  if (!attemptCard) return;
+  const attemptId = attemptCard.dataset.attemptId ?? "";
+  if (!attemptId) return;
+  const attempt = getAttemptById(attemptId);
+  if (!attempt) return;
+  renderAttemptIntoEditor(attempt);
+  document
+    .querySelectorAll("[data-attempt-list] [data-attempt-id]")
+    .forEach((node) => node.classList.toggle("active", node.dataset.attemptId === attemptId));
+  setStatus(attemptStatus, "已切换到该次回答，可查看、重评分或继续修改后重答。", "ok");
 });
 
 // ---------------------------------------------------------------------------

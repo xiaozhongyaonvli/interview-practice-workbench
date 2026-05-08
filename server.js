@@ -12,7 +12,8 @@ import { createLlmDebugStore } from "./src/storage/llmDebugStore.js";
 import { createCrawlCursorStore } from "./src/storage/crawlCursorStore.js";
 import { createNowCoderAdapter } from "./src/sources/nowcoderAdapter.js";
 import { defaultPromptProvider } from "./src/llm/promptProvider.js";
-import { createDeepSeekChat } from "./src/llm/deepSeekClient.js";
+import { createOpenAiCompatibleChat } from "./src/llm/deepSeekClient.js";
+import { createQwenChat } from "./src/llm/qwenClient.js";
 import { createLlmEvaluationService } from "./src/llm/llmEvaluationService.js";
 import { createArticleApi } from "./src/api/articles.js";
 import { createQuestionApi } from "./src/api/questions.js";
@@ -97,13 +98,28 @@ export function createAppServer({
   // adapter wired to Node's global fetch.
   const nowCoder = nowCoderAdapter ?? createNowCoderAdapter();
 
-  // LLM service is optional. Three intake paths:
+  // LLM service is optional. Two intake paths:
   //   1) caller injects a service (tests)
-  //   2) DEEPSEEK_API_KEY is set in env (production)
+  //   2) generic GPT-compatible env vars are set (production)
   //   3) neither — routes that need LLM return LLM_NOT_CONFIGURED 400
   let resolvedLlmService = llmService;
-  if (!resolvedLlmService && process.env.DEEPSEEK_API_KEY) {
-    const chat = createDeepSeekChat({ apiKey: process.env.DEEPSEEK_API_KEY });
+  const genericApiKey = process.env.LLM_API_KEY;
+  if (!resolvedLlmService && genericApiKey) {
+    const baseURL = process.env.LLM_BASE_URL ?? "https://api.openai.com/v1";
+    const normalizedBaseURL = String(baseURL).trim().toLowerCase();
+    const chat = normalizedBaseURL.includes("dashscope.aliyuncs.com")
+      ? createQwenChat({
+          apiKey: genericApiKey,
+          baseURL,
+          model: process.env.LLM_MODEL ?? "qwen-plus"
+        })
+      : createOpenAiCompatibleChat({
+          apiKey: genericApiKey,
+          baseURL,
+          model: process.env.LLM_MODEL ?? undefined,
+          apiStyle: process.env.LLM_API_STYLE ?? undefined,
+          reasoningEffort: process.env.LLM_REASONING_EFFORT ?? undefined
+        });
     resolvedLlmService = createLlmEvaluationService({
       chatComplete: chat,
       promptProvider: defaultPromptProvider,
@@ -201,6 +217,12 @@ export function createAppServer({
 
     if (url.pathname === "/api/attempts" && req.method === "GET") {
       await attemptApi.handleList(req, res, url);
+      return;
+    }
+
+    const attemptDeleteMatch = url.pathname.match(/^\/api\/attempts\/([A-Za-z0-9_-]+)$/);
+    if (attemptDeleteMatch && req.method === "DELETE") {
+      await attemptApi.handleDelete(req, res, attemptDeleteMatch[1]);
       return;
     }
 

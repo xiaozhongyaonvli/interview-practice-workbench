@@ -12,6 +12,7 @@ import { createQuestionStore } from "../src/storage/questionStore.js";
 import { createAttemptStore } from "../src/storage/attemptStore.js";
 import { createCardStore } from "../src/storage/cardStore.js";
 import { createCrawlCursorStore } from "../src/storage/crawlCursorStore.js";
+import { createScoreStore } from "../src/storage/scoreStore.js";
 import { StorageError, ValidationError } from "../src/domain/errors.js";
 
 async function makeBase() {
@@ -298,6 +299,72 @@ test("attemptStore: filtering by questionId leaves other questions alone", async
     assert.equal(redis.length, 1);
     assert.equal(mysql[0].attemptId, "attempt-001");
     assert.equal(redis[0].attemptId, "attempt-other");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("attemptStore.remove: deletes only the targeted attempt", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createAttemptStore({ baseDir });
+    await store.append({ ...attemptSample });
+    await store.append({ ...attemptSample, attemptId: "attempt-002" });
+
+    const result = await store.remove("attempt-001");
+    assert.deepEqual(result, { removed: true });
+
+    const list = await store.listByQuestion("mysql-slow-sql");
+    assert.equal(list.length, 1);
+    assert.equal(list[0].attemptId, "attempt-002");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("scoreStore.removeByAttemptId: deletes all score records for one attempt", async () => {
+  const baseDir = await makeBase();
+  try {
+    const store = createScoreStore({ baseDir });
+    const summary = {
+      scores: {
+        technicalCorrectness: 8,
+        coverageCompleteness: 7,
+        logicalStructure: 8,
+        expressionClarity: 8,
+        interviewPerformance: 7
+      },
+      overallComment: "ok",
+      primaryTechnicalGap: "gap-a",
+      primaryExpressionGap: "gap-b",
+      engineeringMindsetGap: "gap-c",
+      retryInstruction: "retry"
+    };
+    await store.append({
+      attemptId: "attempt-001",
+      scoredAt: "2026-05-08T10:00:00Z",
+      feedbackPromptVersion: "interview-coach-v2",
+      summary
+    });
+    await store.append({
+      attemptId: "attempt-001",
+      scoredAt: "2026-05-08T10:01:00Z",
+      feedbackPromptVersion: "interview-coach-v2",
+      summary
+    });
+    await store.append({
+      attemptId: "attempt-002",
+      scoredAt: "2026-05-08T10:02:00Z",
+      feedbackPromptVersion: "interview-coach-v2",
+      summary
+    });
+
+    const result = await store.removeByAttemptId("attempt-001");
+    assert.deepEqual(result, { removedCount: 2 });
+    const latest1 = await store.latestForAttempt("attempt-001");
+    const latest2 = await store.latestForAttempt("attempt-002");
+    assert.equal(latest1, null);
+    assert.equal(latest2.attemptId, "attempt-002");
   } finally {
     await rm(baseDir, { recursive: true, force: true });
   }

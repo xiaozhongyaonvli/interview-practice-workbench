@@ -77,14 +77,31 @@ Copy-Item .env.example .env
 Then set:
 
 ```text
-DEEPSEEK_API_KEY=your_key_here
+LLM_API_KEY=your_key_here
+LLM_BASE_URL=https://api.openai.com/v1
+# optional:
+# LLM_MODEL=
+# LLM_API_STYLE=
+# LLM_REASONING_EFFORT=high
 ```
 
-When `DEEPSEEK_API_KEY` is present, the app enables:
+When `LLM_API_KEY` is present, the app enables:
 
 - `POST /api/questions/extract`
 - `POST /api/attempts/:id/llm-score`
 - title-level interview classification during NowCoder fetch
+
+Provider defaults:
+
+- `LLM_BASE_URL=https://api.openai.com/v1`
+  `LLM_MODEL` defaults to `gpt-5.2`
+  `LLM_API_STYLE` defaults to `responses`
+- `LLM_BASE_URL=https://api.deepseek.com`
+  `LLM_MODEL` defaults to `deepseek-chat`
+  `LLM_API_STYLE` defaults to `chat_completions`
+
+So if your provider is GPT-compatible and only differs by `base_url` and
+`api_key`, you only need to change those two fields.
 
 Without a key, the manual paste workflows still work.
 
@@ -147,4 +164,3 @@ npm run test:e2e
 - Attempts and scores are append-only
 - Cards are only written through `POST /api/cards/from-attempt`
 - Invalid LLM output is preserved in `data/llm/` for debugging instead of being silently dropped
-

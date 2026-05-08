@@ -227,3 +227,39 @@ test("re-scoring an attempt appends a new score record (no in-place mutation)", 
     await rm(baseDir, { recursive: true, force: true });
   }
 });
+
+test("DELETE /api/attempts/:id removes the attempt and its score records", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const attempt = await seedAttempt(baseUrl);
+      await fetch(`${baseUrl}/api/attempts/${attempt.attemptId}/score`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ summary: validSummary })
+      });
+
+      const del = await fetch(`${baseUrl}/api/attempts/${attempt.attemptId}`, {
+        method: "DELETE"
+      });
+      assert.equal(del.status, 200);
+      const payload = await del.json();
+      assert.equal(payload.ok, true);
+      assert.equal(payload.attemptId, attempt.attemptId);
+      assert.equal(payload.removedScores, 1);
+
+      const list = await (
+        await fetch(`${baseUrl}/api/attempts?questionId=mysql-slow-sql`)
+      ).json();
+      assert.equal(list.attempts.length, 0);
+
+      const log = await readFile(
+        join(baseDir, "scores", "scores.jsonl"),
+        "utf8"
+      );
+      assert.equal(log.trim(), "");
+    }, { baseDir });
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});

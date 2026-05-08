@@ -85,6 +85,28 @@ export function createScoreStore({ baseDir }) {
         }
       }
       return map;
+    },
+
+    async removeByAttemptId(attemptId) {
+      if (typeof attemptId !== "string" || attemptId.length === 0) {
+        throw new StorageError("attemptId is required", {
+          code: "SCORE_QUERY_INVALID"
+        });
+      }
+      const all = await readJsonlRecords(filePath);
+      const kept = all.filter((r) => r.attemptId !== attemptId);
+      const removedCount = all.length - kept.length;
+      if (removedCount === 0) {
+        return { removedCount: 0 };
+      }
+      const { writeFile, rename, mkdir } = await import("node:fs/promises");
+      const { dirname } = await import("node:path");
+      await mkdir(dirname(filePath), { recursive: true });
+      const tmpPath = `${filePath}.tmp`;
+      const body = kept.map((record) => JSON.stringify(record)).join("\n");
+      await writeFile(tmpPath, body.length > 0 ? `${body}\n` : "", "utf8");
+      await rename(tmpPath, filePath);
+      return { removedCount };
     }
   };
 }

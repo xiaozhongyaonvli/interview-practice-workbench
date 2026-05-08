@@ -113,8 +113,8 @@ test("POST /api/questions/extract accepts ad-hoc title/text without saving an ar
 test("POST /api/questions/extract returns LLM_NOT_CONFIGURED when no service is wired", async () => {
   const baseDir = await makeBase();
   // Ensure the env doesn't accidentally configure a real service.
-  const previous = process.env.DEEPSEEK_API_KEY;
-  delete process.env.DEEPSEEK_API_KEY;
+  const previous = process.env.LLM_API_KEY;
+  delete process.env.LLM_API_KEY;
   try {
     await withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/questions/extract`, {
@@ -127,7 +127,7 @@ test("POST /api/questions/extract returns LLM_NOT_CONFIGURED when no service is 
       assert.equal(body.code, "LLM_NOT_CONFIGURED");
     }, { baseDir });
   } finally {
-    if (previous !== undefined) process.env.DEEPSEEK_API_KEY = previous;
+    if (previous !== undefined) process.env.LLM_API_KEY = previous;
     await rm(baseDir, { recursive: true, force: true });
   }
 });
@@ -205,8 +205,8 @@ test("POST /api/attempts/:id/llm-score scores an attempt end-to-end", async () =
 
 test("POST /api/attempts/:id/llm-score 400s when no LLM service is configured", async () => {
   const baseDir = await makeBase();
-  const previous = process.env.DEEPSEEK_API_KEY;
-  delete process.env.DEEPSEEK_API_KEY;
+  const previous = process.env.LLM_API_KEY;
+  delete process.env.LLM_API_KEY;
   try {
     await withServer(async (baseUrl) => {
       // Seed a question manually via /import so we have an attempt to score.
@@ -237,7 +237,7 @@ test("POST /api/attempts/:id/llm-score 400s when no LLM service is configured", 
       assert.equal(body.code, "LLM_NOT_CONFIGURED");
     }, { baseDir });
   } finally {
-    if (previous !== undefined) process.env.DEEPSEEK_API_KEY = previous;
+    if (previous !== undefined) process.env.LLM_API_KEY = previous;
     await rm(baseDir, { recursive: true, force: true });
   }
 });
