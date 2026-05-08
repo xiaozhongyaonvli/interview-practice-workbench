@@ -70,7 +70,7 @@ function createSim({ nowCoderResponse }) {
   return { fetch, articles, calls };
 }
 
-test("clicking the 牛客 tab reveals the fetch form", async () => {
+test("clicking the 自动抓题 tab reveals the fetch form", async () => {
   const sim = createSim({
     nowCoderResponse: { status: 200, body: { saved: [], failed: [], discovered: 0, searchUrl: "" } }
   });
@@ -123,7 +123,7 @@ test("successful fetch shows direct question-pool status", async () => {
   assert.equal(document.querySelector("[data-imported-list]"), null);
 });
 
-test("feed fetch refreshes the __feed__ pool and candidate can be accepted", async () => {
+test("feed fetch refreshes the __feed__ pool and candidate still exposes ignore only", async () => {
   const feedQuestion = {
     id: "feed-q1",
     question: "Redis 分布式锁有什么问题？",
@@ -172,14 +172,13 @@ test("feed fetch refreshes the __feed__ pool and candidate can be accepted", asy
     const method = (options.method ?? "GET").toUpperCase();
     const parsed = new URL(String(url), "http://127.0.0.1/");
     if (parsed.pathname === "/api/questions" && method === "GET") {
-      const q = parsed.searchParams.get("query") ?? "";
       return Promise.resolve({
         ok: true,
         status: 200,
         json: () =>
           Promise.resolve({
-            questions: q === "__feed__" ? questions : [],
-            meta: { total: q === "__feed__" ? questions.length : 0, filtered: 0, categories: [], statuses: [] }
+            questions,
+            meta: { total: questions.length, filtered: questions.length, categories: [], statuses: [] }
           }),
         text: () => Promise.resolve("{}")
       });
@@ -206,15 +205,8 @@ test("feed fetch refreshes the __feed__ pool and candidate can be accepted", asy
 
   const card = document.querySelector('[data-question-id="feed-q1"]');
   assert.ok(card, "feed question should render after fetch");
-  const acceptBtn = card.querySelector('[data-question-action="accept"]');
-  assert.ok(acceptBtn, "candidate question should expose an accept action");
-
-  acceptBtn.click();
-  await flushDom(dom, 8);
-
-  const summary = document.querySelector("[data-toolbar-summary]");
-  assert.match(summary.textContent, /已保留/);
-  assert.equal(questions[0].status, "accepted");
+  assert.equal(card.querySelector('[data-question-action="accept"]'), null);
+  assert.equal(card.querySelector('[data-question-action="ignore"]') !== null, true);
 });
 
 test("fetch failure leaves the user free to use the manual paste tab", async () => {

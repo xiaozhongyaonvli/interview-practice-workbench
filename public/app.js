@@ -341,11 +341,6 @@ function renderQuestionGrid(questions) {
       </div>
       <div class="card-action-row">
         <button class="primary" type="button" data-open-practice>开始练习</button>
-        ${
-          q.status === "candidate"
-            ? '<button class="ghost" type="button" data-question-action="accept">保留</button>'
-            : ""
-        }
         <button class="ghost" type="button" data-question-action="ignore">忽略</button>
       </div>
     </article>`;
@@ -380,7 +375,6 @@ function renderToolbarSummary(questions) {
   if (!summary) return;
   const total = questions.length;
   const candidate = questions.filter((q) => q.status === "candidate").length;
-  const accepted = questions.filter((q) => q.status === "accepted").length;
   const mastered = questions.filter((q) => q.status === "mastered").length;
   const filtered = applyFilters(questions).length;
   if (total === 0) {
@@ -389,7 +383,7 @@ function renderToolbarSummary(questions) {
   }
   // ignored is filtered out by the API by default — no longer shown in
   // the summary. The toolbar button "清空已忽略" handles bulk cleanup.
-  let text = `共 ${total} 个问题 · ${candidate} 候选 · ${accepted} 已保留 · ${mastered} 已掌握`;
+  let text = `共 ${total} 个问题 · ${candidate} 候选 · ${mastered} 已掌握`;
   if (filtered !== total) {
     text += ` · 当前筛选 ${filtered}`;
   }
@@ -488,14 +482,14 @@ document.addEventListener("click", async (event) => {
   const card = target.closest("[data-question-id]");
   const id = card?.dataset.questionId;
   if (!id) return;
-  if (action !== "ignore" && action !== "accept") return;
+  if (action !== "ignore") return;
 
   if (card) card.classList.add("muted");
   try {
     const response = await fetch(`/api/questions/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status: action === "accept" ? "accepted" : "ignored" })
+      body: JSON.stringify({ status: "ignored" })
     });
     if (!response.ok) console.warn("question patch failed", response.status);
   } catch (error) {
@@ -1452,7 +1446,7 @@ const nowcoderHint = document.querySelector("[data-nowcoder-hint]");
 if (nowcoderForm) {
   nowcoderForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    setStatus(nowcoderStatus, "正在抓取牛客面经...", "ok");
+    setStatus(nowcoderStatus, "正在自动抓题...", "ok");
     const data = new FormData(nowcoderForm);
     const query = String(data.get("query") ?? "").trim();
     // empty query is allowed — server treats it as 面经 feed mode.

@@ -54,7 +54,7 @@
               <h4>获取新题</h4>
               <div class="source-tabs" role="tablist">
                 <button class="active" type="button" data-source-tab="manual">手动粘贴</button>
-                <button type="button" data-source-tab="nowcoder">牛客</button>
+                <button type="button" data-source-tab="nowcoder">自动抓题</button>
                 <button type="button" data-source-tab="extract">手动录题</button>
               </div>
 
@@ -67,10 +67,9 @@
               </form>
 
               <form data-source-panel="nowcoder" class="source-panel" id="nowcoder-fetch-form" hidden novalidate>
-                <input name="query" value="" placeholder="留空获取最新面经,或输入方向(如 mysql)" aria-label="方向关键词">
+                <input name="query" value="" placeholder="可指定方向，如 mysql" aria-label="方向关键词">
                 <p class="source-status" data-source-status hidden></p>
                 <button class="primary full" type="submit">抓取面经</button>
-                <p class="source-hint" data-nowcoder-hint>每次固定抓 2 篇,自动判断是否面经并抽题。当天抓完后会提示已耗尽,失败时可切换到"手动粘贴"。</p>
               </form>
 
               <form data-source-panel="extract" class="source-panel" id="extract-import-form" hidden novalidate>
@@ -88,7 +87,6 @@
                 <div class="answer-actions">
                   <button class="primary" type="submit">加入问题池</button>
                 </div>
-                <p class="source-hint">直接选方向并输入问题即可，不需要粘贴 JSON。</p>
               </form>
             </div>
           </aside>

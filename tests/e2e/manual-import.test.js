@@ -84,7 +84,7 @@ test("the source-box shows the manual paste form by default", async () => {
   assert.equal(nowcoder.hidden, true, "nowcoder panel starts hidden");
 });
 
-test("clicking the 牛客 tab swaps panel visibility", async () => {
+test("clicking the 自动抓题 tab swaps panel visibility", async () => {
   const { fetch } = createApiSim();
   const dom = await buildAppDom({ fetch });
   const { document } = dom.window;
