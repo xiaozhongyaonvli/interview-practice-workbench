@@ -60,7 +60,7 @@ export function createSourcesApi({
   articleStore,
   questionStore = null,
   crawlCursorStore = null,
-  llmService = null,
+  getLlmService = () => null,
   ttlDays = 14,
   now = () => new Date().toISOString(),
   today = defaultLocalDateKey
@@ -70,6 +70,7 @@ export function createSourcesApi({
 
   async function handleNowCoderFetch(req, res) {
     try {
+      const llmService = getLlmService();
       const body = await readJsonBody(req);
 
       const rawQuery = body?.query;

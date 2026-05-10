@@ -69,7 +69,7 @@ export async function autoPurgeIgnored(questionStore) {
   }
 }
 
-export function createQuestionApi({ questionStore, llmDebugStore, articleStore = null, llmService = null, now = nowIso }) {
+export function createQuestionApi({ questionStore, llmDebugStore, articleStore = null, getLlmService = () => null, now = nowIso }) {
   if (!questionStore) throw new Error("createQuestionApi: questionStore is required");
   if (!llmDebugStore) throw new Error("createQuestionApi: llmDebugStore is required");
 
@@ -299,6 +299,7 @@ export function createQuestionApi({ questionStore, llmDebugStore, articleStore =
    */
   async function handleExtract(req, res) {
     try {
+      const llmService = getLlmService();
       if (!llmService || !articleStore) {
         throw new ValidationError(
           "LLM extraction is not configured (set DEEPSEEK_API_KEY)",

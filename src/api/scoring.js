@@ -22,7 +22,7 @@ export function createScoringApi({
   llmDebugStore,
   questionStore = null,
   cardStore = null,
-  llmService = null,
+  getLlmService = () => null,
   now = nowIso
 }) {
   if (!attemptStore) throw new Error("createScoringApi: attemptStore is required");
@@ -134,6 +134,7 @@ export function createScoringApi({
    */
   async function handleLlmScore(req, res, attemptId) {
     try {
+      const llmService = getLlmService();
       if (!llmService || !questionStore) {
         throw new ValidationError(
           "LLM scoring is not configured (set DEEPSEEK_API_KEY)",

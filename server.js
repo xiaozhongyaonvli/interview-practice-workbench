@@ -10,6 +10,7 @@ import { createScoreStore } from "./src/storage/scoreStore.js";
 import { createCardStore } from "./src/storage/cardStore.js";
 import { createLlmDebugStore } from "./src/storage/llmDebugStore.js";
 import { createCrawlCursorStore } from "./src/storage/crawlCursorStore.js";
+import { createSettingsStore } from "./src/storage/settingsStore.js";
 import { createNowCoderAdapter } from "./src/sources/nowcoderAdapter.js";
 import { defaultPromptProvider } from "./src/llm/promptProvider.js";
 import { createOpenAiCompatibleChat } from "./src/llm/deepSeekClient.js";
@@ -21,6 +22,7 @@ import { createAttemptApi } from "./src/api/attempts.js";
 import { createScoringApi } from "./src/api/scoring.js";
 import { createCardsApi } from "./src/api/cards.js";
 import { createSourcesApi } from "./src/api/sources.js";
+import { createSettingsApi } from "./src/api/settings.js";
 import { sendJson } from "./src/api/http.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
@@ -94,45 +96,65 @@ export function createAppServer({
   const cardStore = createCardStore({ baseDir });
   const llmDebugStore = createLlmDebugStore({ baseDir });
   const crawlCursorStore = createCrawlCursorStore({ baseDir });
+  const settingsStore = createSettingsStore({ baseDir });
   // The caller can inject a mock adapter in tests; production uses the real
   // adapter wired to Node's global fetch.
   const nowCoder = nowCoderAdapter ?? createNowCoderAdapter();
 
-  // LLM service is optional. Two intake paths:
-  //   1) caller injects a service (tests)
-  //   2) generic GPT-compatible env vars are set (production)
-  //   3) neither — routes that need LLM return LLM_NOT_CONFIGURED 400
-  let resolvedLlmService = llmService;
-  const genericApiKey = process.env.LLM_API_KEY;
-  if (!resolvedLlmService && genericApiKey) {
-    const baseURL = process.env.LLM_BASE_URL ?? "https://api.openai.com/v1";
+  // LLM service is held in a mutable cell so the settings API can swap it at
+  // runtime without restarting the server. Three intake paths feed the cell:
+  //   1) caller injects a service (tests) -> pinned, settings API still works
+  //      but env/file rebuilds are skipped on startup
+  //   2) generic GPT-compatible env vars are set -> built once on boot
+  //   3) data/settings.json supplies a config -> overrides env
+  const llmHolder = { current: llmService };
+
+  function buildLlmServiceFromConfig(config) {
+    const apiKey = config?.apiKey;
+    if (!apiKey) return null;
+    const baseURL = config.baseURL || "https://api.openai.com/v1";
     const normalizedBaseURL = String(baseURL).trim().toLowerCase();
     const chat = normalizedBaseURL.includes("dashscope.aliyuncs.com")
       ? createQwenChat({
-          apiKey: genericApiKey,
+          apiKey,
           baseURL,
-          model: process.env.LLM_MODEL ?? "qwen-plus"
+          model: config.model || "qwen-plus"
         })
       : createOpenAiCompatibleChat({
-          apiKey: genericApiKey,
+          apiKey,
           baseURL,
-          model: process.env.LLM_MODEL ?? undefined,
-          apiStyle: process.env.LLM_API_STYLE ?? undefined,
-          reasoningEffort: process.env.LLM_REASONING_EFFORT ?? undefined
+          model: config.model || undefined,
+          apiStyle: config.apiStyle || undefined,
+          reasoningEffort: config.reasoningEffort || undefined
         });
-    resolvedLlmService = createLlmEvaluationService({
+    return createLlmEvaluationService({
       chatComplete: chat,
       promptProvider: defaultPromptProvider,
       llmDebugStore
     });
   }
 
+  if (!llmHolder.current) {
+    const envConfig = {
+      apiKey: process.env.LLM_API_KEY,
+      baseURL: process.env.LLM_BASE_URL,
+      model: process.env.LLM_MODEL,
+      apiStyle: process.env.LLM_API_STYLE,
+      reasoningEffort: process.env.LLM_REASONING_EFFORT
+    };
+    if (envConfig.apiKey) {
+      llmHolder.current = buildLlmServiceFromConfig(envConfig);
+    }
+  }
+
+  const getLlmService = () => llmHolder.current;
+
   const articleApi = createArticleApi({ articleStore });
   const questionApi = createQuestionApi({
     questionStore,
     llmDebugStore,
     articleStore,
-    llmService: resolvedLlmService
+    getLlmService
   });
   const attemptApi = createAttemptApi({ attemptStore, scoreStore });
   const scoringApi = createScoringApi({
@@ -141,7 +163,7 @@ export function createAppServer({
     llmDebugStore,
     questionStore,
     cardStore,
-    llmService: resolvedLlmService
+    getLlmService
   });
   const cardsApi = createCardsApi({ questionStore, attemptStore, scoreStore, cardStore });
   const ttlDays = Number.parseInt(process.env.NOWCODER_ARTICLE_TTL_DAYS ?? "14", 10);
@@ -150,9 +172,30 @@ export function createAppServer({
     articleStore,
     questionStore,
     crawlCursorStore,
-    llmService: resolvedLlmService,
+    getLlmService,
     ttlDays: Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays : 14
   });
+  const settingsApi = createSettingsApi({
+    settingsStore,
+    onLlmConfigChange: (config) => {
+      llmHolder.current = config?.apiKey ? buildLlmServiceFromConfig(config) : null;
+    }
+  });
+
+  // Hydrate from data/settings.json on startup so a UI-saved config wins
+  // over env vars. Failure is non-fatal — fall back to env-built service.
+  settingsStore
+    .read()
+    .then((settings) => {
+      const cfg = settings?.llm;
+      if (cfg?.apiKey) {
+        llmHolder.current = buildLlmServiceFromConfig(cfg);
+      }
+    })
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn("settingsStore.read failed (continuing):", err?.message ?? err);
+    });
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -163,8 +206,20 @@ export function createAppServer({
       sendJson(res, 200, {
         ok: true,
         service: "interview-training-workbench",
-        llmConfigured: Boolean(resolvedLlmService)
+        llmConfigured: Boolean(llmHolder.current)
       });
+      return;
+    }
+
+    // --- Settings routes --------------------------------------------------
+
+    if (url.pathname === "/api/settings/llm" && req.method === "GET") {
+      await settingsApi.handleGetLlm(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/settings/llm" && req.method === "POST") {
+      await settingsApi.handleUpdateLlm(req, res);
       return;
     }
 
