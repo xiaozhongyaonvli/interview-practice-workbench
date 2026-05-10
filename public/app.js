@@ -145,7 +145,7 @@ function showView(name, options = {}) {
 
   if (typeof window.scrollTo === "function") {
     try {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.scrollTo({ top: 0, behavior: "instant" });
     } catch {
       /* jsdom or embedded environments may throw */
     }
