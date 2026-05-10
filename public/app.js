@@ -215,6 +215,112 @@ document.querySelector("[data-header-new-card]")?.addEventListener("click", () =
 });
 
 // ---------------------------------------------------------------------------
+// Settings modal (gear icon -> LLM config)
+// ---------------------------------------------------------------------------
+
+const settingsModal = document.querySelector("[data-settings-modal]");
+const settingsForm = document.querySelector("[data-settings-form]");
+const settingsStatus = document.querySelector("[data-settings-status]");
+const settingsKeyHint = document.querySelector("[data-settings-keyhint]");
+
+function openSettingsModal() {
+  if (!settingsModal) return;
+  settingsModal.hidden = false;
+  document.body.style.overflow = "hidden";
+  loadSettingsIntoForm().catch((err) => {
+    setStatus(settingsStatus, `加载失败: ${err?.message ?? err}`, "error");
+  });
+}
+
+function closeSettingsModal() {
+  if (!settingsModal) return;
+  settingsModal.hidden = true;
+  document.body.style.overflow = "";
+  setStatus(settingsStatus, "", null);
+  settingsForm?.reset();
+}
+
+async function loadSettingsIntoForm() {
+  if (!settingsForm) return;
+  setStatus(settingsStatus, "加载中…", null);
+  const res = await fetch("/api/settings/llm");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const cfg = data.llm ?? {};
+  settingsForm.querySelector("[name=apiKey]").value = "";
+  settingsForm.querySelector("[name=baseURL]").value = cfg.baseURL ?? "";
+  settingsForm.querySelector("[name=model]").value = cfg.model ?? "";
+  settingsForm.querySelector("[name=apiStyle]").value = cfg.apiStyle ?? "";
+  settingsForm.querySelector("[name=reasoningEffort]").value = cfg.reasoningEffort ?? "";
+  if (settingsKeyHint) {
+    settingsKeyHint.textContent = cfg.apiKeyPresent
+      ? `已保存的 Key: ${cfg.apiKeyMasked}`
+      : "未配置";
+  }
+  setStatus(settingsStatus, "", null);
+}
+
+document.querySelector("[data-open-settings]")?.addEventListener("click", openSettingsModal);
+document.querySelector("[data-settings-close]")?.addEventListener("click", closeSettingsModal);
+document.querySelector("[data-settings-backdrop]")?.addEventListener("click", closeSettingsModal);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && settingsModal && !settingsModal.hidden) {
+    closeSettingsModal();
+  }
+});
+
+document.querySelector("[data-settings-clear-key]")?.addEventListener("click", async () => {
+  if (!confirm("清除已保存的 LLM Key?LLM 抽题/评分将立即不可用。")) return;
+  setStatus(settingsStatus, "保存中…", null);
+  try {
+    const res = await fetch("/api/settings/llm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: null })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+    if (settingsKeyHint) settingsKeyHint.textContent = "未配置";
+    setStatus(settingsStatus, "已清除", "ok");
+  } catch (err) {
+    setStatus(settingsStatus, `失败: ${err?.message ?? err}`, "error");
+  }
+});
+
+settingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const fd = new FormData(settingsForm);
+  const payload = {
+    baseURL: fd.get("baseURL") ?? "",
+    model: fd.get("model") ?? "",
+    apiStyle: fd.get("apiStyle") ?? "",
+    reasoningEffort: fd.get("reasoningEffort") ?? ""
+  };
+  const apiKey = String(fd.get("apiKey") ?? "").trim();
+  if (apiKey) payload.apiKey = apiKey;
+  setStatus(settingsStatus, "保存中…", null);
+  try {
+    const res = await fetch("/api/settings/llm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+    const cfg = data.llm ?? {};
+    if (settingsKeyHint) {
+      settingsKeyHint.textContent = cfg.apiKeyPresent
+        ? `已保存的 Key: ${cfg.apiKeyMasked}`
+        : "未配置";
+    }
+    settingsForm.querySelector("[name=apiKey]").value = "";
+    setStatus(settingsStatus, "已保存", "ok");
+  } catch (err) {
+    setStatus(settingsStatus, `失败: ${err?.message ?? err}`, "error");
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Source-box tab switching (manual / nowcoder / extract)
 // ---------------------------------------------------------------------------
 

@@ -1375,3 +1375,97 @@ label {
     grid-template-columns: 1fr;
   }
 }
+
+/* --- Settings (gear button + LLM modal) --- */
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-height: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.icon-btn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.icon-btn:active {
+  transform: rotate(30deg);
+}
+
+.icon-btn svg {
+  display: block;
+}
+
+.settings-panel {
+  width: min(560px, 100%);
+  padding: 22px 22px 18px;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-form .form-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-form .form-row > span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.settings-form .form-row input,
+.settings-form .form-row select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.settings-form .form-row input:focus,
+.settings-form .form-row select:focus {
+  outline: 2px solid var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.settings-form .form-row small {
+  grid-column: 2;
+  margin-top: -2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+@media (max-width: 560px) {
+  .settings-form .form-row {
+    grid-template-columns: 1fr;
+  }
+  .settings-form .form-row small {
+    grid-column: 1;
+  }
+}
