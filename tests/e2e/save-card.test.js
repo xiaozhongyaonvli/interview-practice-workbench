@@ -232,9 +232,6 @@ test("on duplicate-id rejection, user confirms overwrite and a second POST with 
   const dom = await buildAppDom({ fetch: sim.fetch });
   const { document } = dom.window;
 
-  // Stub window.confirm to always say yes so the overwrite flow exercises.
-  dom.window.confirm = () => true;
-
   document.querySelector("[data-question-grid] [data-open-practice]").click();
   await flushDom(dom, 6);
   document.querySelector("[data-answer-input]").value = "a";
@@ -252,6 +249,10 @@ test("on duplicate-id rejection, user confirms overwrite and a second POST with 
 
   // Second save hits CARD_DUPLICATE_ID, user confirms, retry w/ overwrite.
   document.querySelector("[data-save-card-form]").requestSubmit();
+  await flushDom(dom, 4);
+  const confirmModal = document.querySelector("[data-confirm-modal]");
+  assert.equal(confirmModal.hidden, false);
+  document.querySelector("[data-confirm-ok]").click();
   await flushDom(dom, 8);
 
   const posts = sim.calls.filter(

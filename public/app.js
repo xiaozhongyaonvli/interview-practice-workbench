@@ -1207,6 +1207,7 @@ if (saveAttemptBtn) {
         return;
       }
       lastAttemptId = body?.attemptId ?? null;
+      selectedAttemptId = lastAttemptId;
       setStatus(
         attemptStatus,
         "已保存为第 " + new Date().toLocaleTimeString() + " 的回答",
