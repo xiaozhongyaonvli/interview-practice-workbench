@@ -112,6 +112,47 @@ function statusLabelZh(s) {
   );
 }
 
+function customConfirm(message, title = "确认操作") {
+  return new Promise((resolve) => {
+    const modal = document.querySelector("[data-confirm-modal]");
+    const backdrop = document.querySelector("[data-confirm-backdrop]");
+    const titleEl = document.querySelector("[data-confirm-title]");
+    const messageEl = document.querySelector("[data-confirm-message]");
+    const okBtn = document.querySelector("[data-confirm-ok]");
+    const cancelBtn = document.querySelector("[data-confirm-cancel]");
+
+    if (!modal || !okBtn || !cancelBtn) {
+      resolve(false);
+      return;
+    }
+
+    if (titleEl) titleEl.textContent = title;
+    if (messageEl) messageEl.textContent = message;
+    modal.hidden = false;
+
+    function cleanup() {
+      modal.hidden = true;
+      okBtn.removeEventListener("click", handleOk);
+      cancelBtn.removeEventListener("click", handleCancel);
+      backdrop?.removeEventListener("click", handleCancel);
+    }
+
+    function handleOk() {
+      cleanup();
+      resolve(true);
+    }
+
+    function handleCancel() {
+      cleanup();
+      resolve(false);
+    }
+
+    okBtn.addEventListener("click", handleOk);
+    cancelBtn.addEventListener("click", handleCancel);
+    backdrop?.addEventListener("click", handleCancel);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // View switching (home / practice / cards)
 // ---------------------------------------------------------------------------
@@ -249,7 +290,17 @@ async function loadSettingsIntoForm() {
   const cfg = data.llm ?? {};
   settingsForm.querySelector("[name=apiKey]").value = "";
   settingsForm.querySelector("[name=baseURL]").value = cfg.baseURL ?? "";
-  settingsForm.querySelector("[name=model]").value = cfg.model ?? "";
+  const modelSelect = settingsForm.querySelector("[data-model-select]");
+  if (modelSelect) {
+    const saved = cfg.model ?? "";
+    if (saved && !modelSelect.querySelector(`option[value="${CSS.escape(saved)}"]`)) {
+      const opt = document.createElement("option");
+      opt.value = saved;
+      opt.textContent = saved;
+      modelSelect.insertBefore(opt, modelSelect.children[1] ?? null);
+    }
+    modelSelect.value = saved;
+  }
   settingsForm.querySelector("[name=apiStyle]").value = cfg.apiStyle ?? "";
   settingsForm.querySelector("[name=reasoningEffort]").value = cfg.reasoningEffort ?? "";
   if (settingsKeyHint) {
@@ -259,6 +310,44 @@ async function loadSettingsIntoForm() {
   }
   setStatus(settingsStatus, "", null);
 }
+
+document.querySelector("[data-fetch-models]")?.addEventListener("click", async () => {
+  const btn = document.querySelector("[data-fetch-models]");
+  const statusEl = document.querySelector("[data-model-fetch-status]");
+  const select = document.querySelector("[data-model-select]");
+  if (!btn || !select) return;
+  const current = select.value;
+  btn.disabled = true;
+  btn.textContent = "加载中…";
+  if (statusEl) { statusEl.hidden = false; statusEl.textContent = ""; }
+  try {
+    const res = await fetch("/api/settings/llm/models");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.message) {
+      if (statusEl) { statusEl.textContent = data.message; statusEl.hidden = false; }
+    } else {
+      if (statusEl) statusEl.hidden = true;
+    }
+    select.innerHTML = '<option value="">留空自动选择</option>';
+    for (const id of data.models ?? []) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      select.appendChild(opt);
+    }
+    if (current) {
+      select.value = current;
+    } else if ((data.models?.length ?? 0) > 0) {
+      select.value = data.models[0];
+    }
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = `获取失败: ${err?.message ?? err}`; statusEl.hidden = false; }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "获取模型";
+  }
+});
 
 document.querySelector("[data-open-settings]")?.addEventListener("click", openSettingsModal);
 document.querySelector("[data-settings-close]")?.addEventListener("click", closeSettingsModal);
@@ -270,7 +359,11 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.querySelector("[data-settings-clear-key]")?.addEventListener("click", async () => {
-  if (!confirm("清除已保存的 LLM Key?LLM 抽题/评分将立即不可用。")) return;
+  const ok = await customConfirm(
+    "清除已保存的 LLM Key?LLM 抽题/评分将立即不可用。",
+    "清除 API Key"
+  );
+  if (!ok) return;
   setStatus(settingsStatus, "保存中…", null);
   try {
     const res = await fetch("/api/settings/llm", {
@@ -650,8 +743,9 @@ if (clearFilterBtn) {
 
 if (purgeIgnoredBtn) {
   purgeIgnoredBtn.addEventListener("click", async () => {
-    const ok = window.confirm(
-      "确认物理删除所有已忽略的题?该操作不可撤销,但 attempts/scores 历史保留。"
+    const ok = await customConfirm(
+      "确认物理删除所有已忽略的题?该操作不可撤销,但 attempts/scores 历史保留。",
+      "删除已忽略的题"
     );
     if (!ok) return;
     purgeIgnoredBtn.disabled = true;
@@ -1148,9 +1242,10 @@ document.addEventListener("click", async (event) => {
     event.stopPropagation();
     const attemptId = deleteBtn.dataset.attemptDelete ?? "";
     if (!attemptId) return;
-    const ok = window.confirm
-      ? window.confirm("确认删除这次回答及其评分记录？该操作不可撤销。")
-      : true;
+    const ok = await customConfirm(
+      "确认删除这次回答及其评分记录？该操作不可撤销。",
+      "删除回答"
+    );
     if (!ok) return;
     try {
       const response = await fetch(`/api/attempts/${encodeURIComponent(attemptId)}`, {
@@ -1603,6 +1698,30 @@ document.querySelector("[data-llm-score]")?.addEventListener("click", async () =
   }
 });
 
+document.querySelector("[data-copy-scoring-prompt]")?.addEventListener("click", async () => {
+  const btn = document.querySelector("[data-copy-scoring-prompt]");
+  const questionText = currentQuestion?.question ?? "";
+  const answerText = document.querySelector("[data-answer-input]")?.value ?? "";
+  if (!questionText) {
+    setStatus(attemptStatus, "请先选择一道题目", "error");
+    return;
+  }
+  if (!answerText.trim()) {
+    setStatus(attemptStatus, "请先写回答再复制提示词", "error");
+    return;
+  }
+  try {
+    const params = new URLSearchParams({ question: questionText, answer: answerText });
+    const res = await fetch(`/api/prompts/scoring?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const prompt = await res.text();
+    await navigator.clipboard.writeText(prompt);
+    if (btn) { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制评分提示词"; }, 1500); }
+  } catch (err) {
+    setStatus(attemptStatus, `复制失败: ${err?.message ?? err}`, "error");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Step 7: save as official card (sidebar form + top-of-detail button)
 // ---------------------------------------------------------------------------
@@ -1674,9 +1793,10 @@ async function submitSaveCard() {
     });
     const body = await response.json().catch(() => null);
     if (response.status === 400 && body?.code === "CARD_DUPLICATE_ID") {
-      const ok = window.confirm
-        ? window.confirm("同名卡片已存在,是否覆盖?")
-        : true;
+      const ok = await customConfirm(
+        "同名卡片已存在,是否覆盖?",
+        "覆盖卡片"
+      );
       if (!ok) {
         setStatus(saveStatus, "已取消保存", "error");
         return;

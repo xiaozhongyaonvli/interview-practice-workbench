@@ -69,6 +69,18 @@ button:hover {
   color: var(--text);
 }
 
+.danger {
+  border-color: #dc3545;
+  background: #dc3545;
+  color: #fff;
+  font-weight: 600;
+}
+
+.danger:hover {
+  border-color: #c82333;
+  background: #c82333;
+}
+
 .full {
   width: 100%;
 }
@@ -505,6 +517,39 @@ select {
   word-break: break-word;
   overflow-y: auto;
   flex: 1;
+}
+
+.confirm-panel {
+  width: min(420px, 100%);
+  max-height: auto;
+}
+
+.confirm-content {
+  margin-bottom: 24px;
+}
+
+.confirm-content h3 {
+  margin: 0 0 12px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.confirm-content p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.confirm-actions button {
+  min-width: 80px;
 }
 
 @media (max-width: 720px) {
@@ -1452,6 +1497,22 @@ label {
   margin-top: -2px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.model-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-row button {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .settings-actions {

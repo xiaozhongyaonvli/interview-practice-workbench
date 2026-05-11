@@ -103,5 +103,45 @@ export function createSettingsApi({ settingsStore, onLlmConfigChange = () => {} 
     }
   }
 
-  return { handleGetLlm, handleUpdateLlm };
+  async function handleFetchModels(_req, res) {
+    try {
+      const settings = await settingsStore.read();
+      const cfg = settings.llm ?? {};
+      const apiKey = cfg.apiKey;
+      if (!apiKey) {
+        sendJson(res, 200, { models: [], message: "未配置 API Key" });
+        return;
+      }
+
+      const baseURL = (cfg.baseURL || "https://api.openai.com/v1").replace(/\/+$/, "");
+      // OpenAI-compatible APIs expect GET /v1/models. Ensure /v1 is in the
+      // path when the base URL doesn't already end with it.
+      const modelsURL = baseURL.endsWith("/v1")
+        ? `${baseURL}/models`
+        : `${baseURL}/v1/models`;
+      const response = await fetch(modelsURL, {
+        headers: { Authorization: `Bearer ${apiKey}` }
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        sendJson(res, 200, {
+          models: [],
+          message: `请求失败: HTTP ${response.status}${text ? ` — ${text.slice(0, 200)}` : ""}`
+        });
+        return;
+      }
+
+      const data = await response.json();
+      const models = (data.data ?? [])
+        .map((m) => m.id)
+        .filter((id) => typeof id === "string" && id.length > 0)
+        .sort();
+      sendJson(res, 200, { models });
+    } catch (err) {
+      sendError(res, err);
+    }
+  }
+
+  return { handleGetLlm, handleUpdateLlm, handleFetchModels };
 }

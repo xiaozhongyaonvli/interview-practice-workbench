@@ -223,6 +223,11 @@ export function createAppServer({
       return;
     }
 
+    if (url.pathname === "/api/settings/llm/models" && req.method === "GET") {
+      await settingsApi.handleFetchModels(req, res);
+      return;
+    }
+
     // --- Article routes ---------------------------------------------------
 
     if (url.pathname === "/api/articles/manual" && req.method === "POST") {
@@ -313,6 +318,21 @@ export function createAppServer({
 
     if (url.pathname === "/api/sources/nowcoder/fetch" && req.method === "POST") {
       await sourcesApi.handleNowCoderFetch(req, res);
+      return;
+    }
+
+    // --- Prompt routes ----------------------------------------------------
+
+    if (url.pathname === "/api/prompts/scoring" && req.method === "GET") {
+      try {
+        const question = url.searchParams.get("question") ?? "";
+        const answer = url.searchParams.get("answer") ?? "";
+        const prompt = await defaultPromptProvider.scoringPrompt({ question, answer, context: "" });
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+        res.end(prompt);
+      } catch (err) {
+        sendError(res, err);
+      }
       return;
     }
 
