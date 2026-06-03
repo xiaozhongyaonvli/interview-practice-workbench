@@ -11,6 +11,26 @@ test("extractionPrompt fills query/title/text placeholders", async () => {
   assert.match(text, /方向关键词:mysql/);
   assert.match(text, /字节二面 MySQL 面经/);
   assert.match(text, /面试官问了/);
+  assert.match(text, /方向约束/);
+  assert.match(text, /只输出与该方向直接相关/);
+});
+
+test("extractionPrompt documents feed vs search direction behavior", async () => {
+  const feed = await defaultPromptProvider.extractionPrompt({
+    query: "面经",
+    title: "t",
+    text: "x"
+  });
+  assert.match(feed, /方向关键词为 `面经`/);
+  assert.match(feed, /不施加方向过滤/);
+
+  const search = await defaultPromptProvider.extractionPrompt({
+    query: "kafka",
+    title: "t",
+    text: "x"
+  });
+  assert.match(search, /方向关键词:kafka/);
+  assert.match(search, /只输出与该方向直接相关/);
 });
 
 test("scoringPrompt fills question/answer/context placeholders and keeps gap-field rules", async () => {
