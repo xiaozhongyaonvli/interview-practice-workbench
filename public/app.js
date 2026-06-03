@@ -1900,6 +1900,8 @@ if (nowcoderForm) {
       const purgedIgnored = Number.isInteger(body?.purgedIgnored) ? body.purgedIgnored : 0;
       const diagnostics = body?.diagnostics ?? null;
       const exhaustedToday = body?.exhaustedToday === true;
+      const exhaustionReason = body?.exhaustionReason ?? null;
+      const totalCandidates = body?.totalCandidates;
       const parts = [`已新增 ${savedQuestionCount} 个问题`];
       parts.push(`抓 ${savedArticleCount} 篇`);
       if (skippedCount > 0) parts.push(`跳过旧链接 ${skippedCount}`);
@@ -1917,7 +1919,23 @@ if (nowcoderForm) {
       if (failedCount > 0) parts.push(`${failedCount} 失败`);
       if (pruned > 0) parts.push(`已清理 ${pruned} 篇过期`);
       if (purgedIgnored > 0) parts.push(`已清理 ${purgedIgnored} 条忽略`);
-      if (exhaustedToday) parts.push("今天的牛客池子已抓完,明天再试或换关键词");
+      if (exhaustedToday) {
+        if (exhaustionReason === "list_end" && Number.isInteger(totalCandidates)) {
+          parts.push(
+            `今日列表共 ${totalCandidates} 条已扫完,可换关键词;同词明天会从头跳过已收录`
+          );
+        } else if (exhaustionReason === "all_known") {
+          parts.push("本批链接均已收录,换关键词或清空该方向旧文章后再抓");
+        } else if (exhaustionReason === "no_candidates") {
+          parts.push("未拉到候选链接,检查网络或稍后重试");
+        } else {
+          parts.push("今天暂无新面经,明天再试或换关键词");
+        }
+      }
+      const lowQualityFails = (body?.failed ?? []).filter(
+        (f) => f?.code === "NOWCODER_ARTICLE_LOW_QUALITY"
+      ).length;
+      if (lowQualityFails > 0) parts.push(`${lowQualityFails} 篇正文异常(疑似登录页)`);
       const tone = exhaustedToday
         ? "ok"
         : savedQuestionCount > 0 || savedArticleCount > 0

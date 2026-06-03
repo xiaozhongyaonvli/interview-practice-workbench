@@ -22,6 +22,23 @@ function mockFetchByUrl(mapping) {
   return { httpFetch, calls };
 }
 
+/** Force legacy HTML search path in unit tests (avoid live pc/search API). */
+function createAdapterForHtmlSearch(options = {}) {
+  const { httpFetch, jsonFetch, ...rest } = options;
+  return createNowCoderAdapter({
+    httpFetch,
+    jsonFetch:
+      jsonFetch ??
+      (async (url) => {
+        if (String(url).includes("/api/sparta/pc/search")) {
+          return { status: 404, text: "{}", url };
+        }
+        return { status: 404, text: "{}", url };
+      }),
+    ...rest
+  });
+}
+
 const SEARCH_HTML_BASE = `<!doctype html>
 <html><head><title>search</title></head><body>
 <a href="/discuss/123">ByteDance MySQL interview notes</a>
@@ -52,7 +69,7 @@ test("searchAndFetch returns ArticleRecord-shaped objects for discovered links",
     "https://www.nowcoder.com/discuss/123": ARTICLE_1,
     "https://www.nowcoder.com/discuss/456": ARTICLE_2
   });
-  const adapter = createNowCoderAdapter({
+  const adapter = createAdapterForHtmlSearch({
     httpFetch,
     now: () => "2026-05-05T10:00:00Z"
   });
@@ -100,7 +117,7 @@ test("empty query feed URL can be overridden for a different job track", () => {
 
 test("rejects a search-page HTTP failure with a visible error", async () => {
   const httpFetch = async () => ({ status: 500, text: "server error" });
-  const adapter = createNowCoderAdapter({ httpFetch });
+  const adapter = createAdapterForHtmlSearch({ httpFetch });
   await assert.rejects(
     adapter.searchAndFetch({ query: "mysql" }),
     (err) => {
@@ -117,7 +134,7 @@ test("per-article fetch failures are reported but do not abort the batch", async
     if (url.endsWith("/discuss/456")) return { status: 502, text: "bad gateway" };
     return { status: 404, text: "" };
   };
-  const adapter = createNowCoderAdapter({ httpFetch });
+  const adapter = createAdapterForHtmlSearch({ httpFetch });
 
   const result = await adapter.searchAndFetch({ query: "mysql", maxArticles: 2 });
   const successes = result.records.filter((r) => !r.__error);
@@ -138,7 +155,7 @@ test("maxArticles bounds the fetch count and sleep is called between fetches", a
     return { status: 200, text: "<html><title>t</title><body>interview</body></html>" };
   };
   const sleeps = [];
-  const adapter = createNowCoderAdapter({
+  const adapter = createAdapterForHtmlSearch({
     httpFetch,
     delayMs: 7,
     sleep: (ms) => {
@@ -252,7 +269,7 @@ test("searchAndFetch keeps full listing text in metadata when candidate title wa
   const searchHtml = `<a href="/discuss/999">${listingText}</a>`;
   const articleHtml =
     "<html><head><title>Detailed title</title></head><body>Redis and MySQL正文</body></html>";
-  const adapter = createNowCoderAdapter({
+  const adapter = createAdapterForHtmlSearch({
     httpFetch: async (url) => {
       if (url.includes("/search/all")) return { status: 200, text: searchHtml, url };
       return { status: 200, text: articleHtml, url };
@@ -274,7 +291,7 @@ test("excludeUrls skips already-known links and reports them as skipped", async 
     }
     return { status: 200, text: ARTICLE_1 };
   };
-  const adapter = createNowCoderAdapter({ httpFetch });
+  const adapter = createAdapterForHtmlSearch({ httpFetch });
 
   const result = await adapter.searchAndFetch({
     query: "mysql",
@@ -295,7 +312,7 @@ test("excludeUrls default preserves the original behavior", async () => {
     if (url.endsWith("/discuss/123")) return { status: 200, text: ARTICLE_1 };
     return { status: 200, text: ARTICLE_2 };
   };
-  const adapter = createNowCoderAdapter({ httpFetch });
+  const adapter = createAdapterForHtmlSearch({ httpFetch });
   const result = await adapter.searchAndFetch({ query: "mysql", maxArticles: 5 });
   assert.equal(result.records.length, 2);
   assert.deepEqual(result.skipped, []);
@@ -451,6 +468,51 @@ test("classifyTitles uses a wider pool so rejected titles do not shrink the fetc
   );
   assert.equal(result.classifiedNo.length, 3);
   assert.equal(result.links.length, 2);
+});
+
+test("search mode uses pc/search JSON API for pagination instead of HTML page links", async () => {
+  const searchCalls = [];
+  const jsonFetch = async (url, { body } = {}) => {
+    if (!url.includes("/api/sparta/pc/search")) {
+      return { status: 404, text: "{}", url };
+    }
+    const payload = JSON.parse(body);
+    searchCalls.push(payload.page);
+    const records =
+      payload.page === 1
+        ? [
+            {
+              entityDataId: 123,
+              data: { contentId: "123", momentData: { id: 123, title: "ByteDance MySQL interview" } }
+            },
+            {
+              entityDataId: 456,
+              data: { contentId: "456", momentData: { id: 456, title: "Meituan backend interview" } }
+            }
+          ]
+        : [];
+    return {
+      status: 200,
+      text: JSON.stringify({
+        success: true,
+        data: { records, totalPage: 3, total: 40, current: payload.page, size: 20 }
+      }),
+      url
+    };
+  };
+  const httpFetch = async (url) => {
+    if (url.includes("/discuss/123")) return { status: 200, text: ARTICLE_1, url };
+    if (url.includes("/discuss/456")) return { status: 200, text: ARTICLE_2, url };
+    return { status: 404, text: "", url };
+  };
+  const adapter = createNowCoderAdapter({ httpFetch, jsonFetch });
+
+  const result = await adapter.searchAndFetch({ query: "mysql", maxArticles: 2 });
+
+  assert.deepEqual(searchCalls, [1]);
+  assert.equal(result.listSource, "search_api");
+  assert.equal(result.records.length, 2);
+  assert.equal(result.totalCandidates, 2);
 });
 
 test("feedJobIdFromUrl reads numeric tagId from the feed URL", () => {

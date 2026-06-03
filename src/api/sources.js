@@ -324,7 +324,24 @@ export function createSourcesApi({
       const adapterNextOffset = Number.isInteger(result?.nextOffset)
         ? result.nextOffset
         : cursorOffset + freshCount;
+      const totalCandidates = Number.isInteger(result?.totalCandidates)
+        ? result.totalCandidates
+        : 0;
+      const listEndReached =
+        totalCandidates > 0 && cursorOffset >= totalCandidates;
       const exhaustedToday = freshCount === 0;
+      let exhaustionReason = null;
+      if (exhaustedToday) {
+        if (totalCandidates === 0) {
+          exhaustionReason = "no_candidates";
+        } else if (listEndReached) {
+          exhaustionReason = "list_end";
+        } else if ((result?.skipped?.length ?? 0) > 0) {
+          exhaustionReason = "all_known";
+        } else {
+          exhaustionReason = "no_fresh";
+        }
+      }
       if (
         !exhaustedToday &&
         crawlCursorStore &&
@@ -354,6 +371,11 @@ export function createSourcesApi({
         partitionQuery,
         dateKey,
         exhaustedToday,
+        exhaustionReason,
+        totalCandidates,
+        searchTotalPages: result?.searchTotalPages ?? 0,
+        listSource: result?.listSource ?? null,
+        listEndReached,
         purgedIgnored,
         entryUrl: result.entryUrl ?? result.searchUrl ?? null,
         // legacy field name kept for tests/old callers

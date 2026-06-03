@@ -7,6 +7,8 @@
 - [x] 每次最多保存 8 篇 fresh article（可用 `NOWCODER_MAX_ARTICLES_PER_FETCH` 调到 1–20）。
 - [x] 启用标题分类时，会先扫更大候选池再取满配额，避免「非面经」标题占掉篇数。
 - [x] 正文抓取与 LLM 抽题默认最多 4 路并发（`NOWCODER_FETCH_CONCURRENCY`）；落盘仍顺序写，避免 JSONL/题库竞态。
+- [x] 关键词搜索走牛客 `pc/search` JSON 分页（与页面下拉加载同源），不再依赖无效的 HTML `?page=`。
+- [x] 空关键词 feed 仍走 `job-experience/experience/job/list` JSON 分页。
 - [x] 支持搜索 query。
 - [x] query 为空时进入 feed 模式。
 - [x] feed 模式使用 `__feed__` 作为问题和文章分区。

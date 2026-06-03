@@ -20,6 +20,11 @@ const DEFAULT_SEARCH_URL_TEMPLATE =
   "https://www.nowcoder.com/search/all?query={query}&type=all&searchType=%E9%A1%B6%E9%83%A8%E5%AF%BC%E8%88%AA%E6%A0%8F";
 const FEED_LIST_API_URL =
   "https://gw-c.nowcoder.com/api/sparta/job-experience/experience/job/list";
+// Search results use the same JSON pagination as the site's infinite scroll,
+// not the static HTML ?page= query (which repeats the SPA shell).
+const SEARCH_LIST_API_URL = "https://gw-c.nowcoder.com/api/sparta/pc/search";
+const SEARCH_PAGE_SIZE = 20;
+const MAX_SEARCH_API_PAGES = 20;
 
 // Empty-query mode: hit NowCoder's fresh interview-experience listing instead
 // of the broad discuss feed. The tagId keeps this scoped to a backend-ish
@@ -121,6 +126,16 @@ function cleanPageTitle(value) {
     .replace(/[_-]\s*牛客网\s*$/u, "")
     .replace(/\s*牛客网\s*$/u, "")
     .trim();
+}
+
+function isBoilerplateArticle({ title, text }) {
+  const t = String(title ?? "");
+  const body = String(text ?? "");
+  if (t.includes("找工作神器")) return true;
+  if (/^牛客网\s*[-|]/.test(t) && body.length < 800) return true;
+  const navMarkers = ["在线编程 面试 面试经验", "我要招人", "登录", "注册"];
+  const navHits = navMarkers.filter((m) => body.includes(m)).length;
+  return body.length < 1200 && navHits >= 3;
 }
 
 function normalizeWhitespace(value) {
@@ -242,6 +257,26 @@ function discoverArticleCandidatesFromEmbeddedState(html, baseUrl) {
     }
   }
   return [...seen.values()];
+}
+
+function searchRecordToCandidate(record) {
+  const data = record?.data;
+  if (!data || typeof data !== "object") return null;
+  const contentId = data.contentId ?? record?.entityDataId;
+  if (contentId === undefined || contentId === null) return null;
+  const detailId = data.momentData?.id ?? contentId;
+  const discussId = String(detailId).trim();
+  if (!/^\d+$/.test(discussId)) return null;
+  const title = normalizeWhitespace(
+    data.momentData?.title ?? data.title ?? record?.title ?? ""
+  );
+  const url = absoluteUrl(`/discuss/${discussId}`, "https://www.nowcoder.com/");
+  if (!url) return null;
+  return {
+    url,
+    title: shortCandidateTitle(title),
+    rawTitle: title
+  };
 }
 
 function mergeCandidates(...candidateLists) {
@@ -386,6 +421,27 @@ export function createNowCoderAdapter({
       .filter(Boolean);
   }
 
+  async function fetchSearchCandidatesPage({ query, page }) {
+    const data = await fetchJson(SEARCH_LIST_API_URL, {
+      method: "POST",
+      body: JSON.stringify({
+        type: "all",
+        query,
+        page,
+        size: SEARCH_PAGE_SIZE
+      })
+    });
+    const records = data?.data?.records;
+    const totalPage = Number(data?.data?.totalPage);
+    if (!Array.isArray(records)) {
+      return { candidates: [], totalPage: Number.isFinite(totalPage) ? totalPage : 0 };
+    }
+    return {
+      candidates: records.map(searchRecordToCandidate).filter(Boolean),
+      totalPage: Number.isFinite(totalPage) ? totalPage : 0
+    };
+  }
+
   /**
    * Convert a single fetched article URL into an ArticleRecord (sans id —
    * the api layer generates that). storedQuery is what gets written into
@@ -467,18 +523,34 @@ export function createNowCoderAdapter({
     let page = 1;
     let exhausted = false;
     let consecutiveEmptyPages = 0;
+    let searchTotalPages = 0;
 
-    while (!exhausted && page <= MAX_LIST_PAGES) {
+    const maxListPages = isFeedMode ? MAX_LIST_PAGES : MAX_SEARCH_API_PAGES;
+
+    while (!exhausted && page <= maxListPages) {
       const pageUrl = buildPagedUrl(entryUrl, page);
       let pageCandidates;
       if (isFeedMode) {
         pageCandidates = await fetchFeedCandidatesPage({ page });
       } else {
-        const entryPage = await fetchHtml(pageUrl);
-        pageCandidates = mergeCandidates(
-          discoverArticleCandidates(entryPage.html, pageUrl),
-          discoverArticleCandidatesFromEmbeddedState(entryPage.html, pageUrl)
-        );
+        try {
+          const searchPage = await fetchSearchCandidatesPage({ query, page });
+          if (searchPage.totalPage > 0) {
+            searchTotalPages = searchPage.totalPage;
+          }
+          pageCandidates = searchPage.candidates;
+        } catch {
+          const entryPage = await fetchHtml(pageUrl);
+          pageCandidates = mergeCandidates(
+            discoverArticleCandidates(entryPage.html, pageUrl),
+            discoverArticleCandidatesFromEmbeddedState(entryPage.html, pageUrl)
+          );
+        }
+      }
+
+      if (!isFeedMode && searchTotalPages > 0 && page >= searchTotalPages) {
+        exhausted = true;
+        break;
       }
       let newCount = 0;
       for (const candidate of pageCandidates) {
@@ -577,6 +649,14 @@ export function createNowCoderAdapter({
             listingText: cand.rawTitle
           };
         }
+        if (isBoilerplateArticle(record)) {
+          return {
+            __error: true,
+            url: cand.url,
+            code: "NOWCODER_ARTICLE_LOW_QUALITY",
+            message: "Article HTML looks like a login or nav shell, not interview content"
+          };
+        }
         return record;
       } catch (err) {
         return {
@@ -595,6 +675,8 @@ export function createNowCoderAdapter({
       offset,
       nextOffset: offset + consumedCount,
       totalCandidates: allCandidates.length,
+      searchTotalPages: isFeedMode ? 0 : searchTotalPages,
+      listSource: isFeedMode ? "feed_api" : "search_api",
       links: fresh.map((c) => c.url),
       candidates: fresh,
       skipped,
@@ -616,6 +698,8 @@ export function createNowCoderAdapter({
       feedJobIdFromUrl,
       entryUrlFor,
       fetchFeedCandidatesPage,
+      fetchSearchCandidatesPage,
+      searchRecordToCandidate,
       discoverArticleCandidates,
       discoverArticleCandidatesFromEmbeddedState,
       mergeCandidates,
