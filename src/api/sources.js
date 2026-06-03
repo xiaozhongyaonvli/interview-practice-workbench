@@ -10,10 +10,10 @@
 //   7. delegate to nowCoderAdapter.searchAndFetch with offset + classifyTitles.
 //      Adapter returns post-classify records and `nextOffset` based on the
 //      candidate slice it consumed.
-//   8. for each surviving record: append to articleStore, then immediately
-//      call llmService.extractQuestions on the article body and persist the
-//      resulting QuestionRecords.
-//   9. when adapter consumed at least one candidate (fresh.length > 0):
+//   8. append each surviving record to articleStore (sequential — JSONL-safe).
+//   9. extract questions with bounded concurrency; persist questions sequentially
+//      (question pool is read-modify-write).
+//  10. when adapter consumed at least one candidate (fresh.length > 0):
 //      advance the cursor; otherwise mark exhaustedToday: true.
 //
 // LLM service is optional. If absent, classification is skipped (treat all as
@@ -25,11 +25,14 @@ import { extractionItemToQuestionRecord } from "../domain/extraction.js";
 import { FEED_QUERY_SENTINEL } from "../sources/nowcoderAdapter.js";
 import { autoPurgeIgnored } from "./questions.js";
 import { readJsonBody, sendJson, sendError } from "./http.js";
+import { mapWithConcurrency } from "../util/mapWithConcurrency.js";
 
 // Default cap: fresh articles per fetch (each may yield up to ~12 questions via
 // LLM extraction). Override with NOWCODER_MAX_ARTICLES_PER_FETCH env (1–20).
 const NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT = 8;
 const NOWCODER_MAX_ARTICLES_HARD_CAP = 20;
+const NOWCODER_EXTRACTION_CONCURRENCY_DEFAULT = 4;
+const NOWCODER_EXTRACTION_CONCURRENCY_HARD_CAP = 8;
 
 // Empty string is allowed (feed mode); otherwise only safe word chars.
 const SAFE_QUERY_OR_EMPTY = /^[\p{L}\p{N}_-]{0,64}$/u;
@@ -63,6 +66,14 @@ function resolveMaxArticlesPerFetch(configured) {
   return NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT;
 }
 
+function resolveExtractionConcurrency(configured) {
+  const n = Number.parseInt(String(configured ?? ""), 10);
+  if (Number.isInteger(n) && n >= 1 && n <= NOWCODER_EXTRACTION_CONCURRENCY_HARD_CAP) {
+    return n;
+  }
+  return NOWCODER_EXTRACTION_CONCURRENCY_DEFAULT;
+}
+
 export function createSourcesApi({
   nowCoderAdapter,
   articleStore,
@@ -71,6 +82,7 @@ export function createSourcesApi({
   getLlmService = () => null,
   ttlDays = 14,
   nowcoderMaxArticlesPerFetch = NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT,
+  nowcoderExtractionConcurrency = NOWCODER_EXTRACTION_CONCURRENCY_DEFAULT,
   now = () => new Date().toISOString(),
   today = defaultLocalDateKey
 }) {
@@ -92,6 +104,7 @@ export function createSourcesApi({
         );
       }
       const maxArticlesPerFetch = resolveMaxArticlesPerFetch(nowcoderMaxArticlesPerFetch);
+      const extractionConcurrency = resolveExtractionConcurrency(nowcoderExtractionConcurrency);
 
       // 1. Prune. Failure here must NOT block the fetch — log and continue.
       let prunedArticles = 0;
@@ -214,63 +227,81 @@ export function createSourcesApi({
             code: storeErr?.code ?? "STORE_FAILED",
             message: storeErr?.message ?? String(storeErr)
           });
-          continue;
         }
+      }
 
-        // 9. Auto-extract questions from this article (if LLM + store wired).
-        if (llmService && questionStore) {
-          diagnostics.extractionAttempted += 1;
-          try {
-            const { extraction } = await llmService.extractQuestions({
-              query: query === "" ? "面经" : query,
-              title: articleRecord.title,
-              text: articleRecord.text
-            });
-            const extractionQuestions = Array.isArray(extraction.questions)
-              ? extraction.questions
-              : [];
-            if (extractionQuestions.length === 0) {
-              diagnostics.extractionNoQuestions += 1;
-            } else {
-              diagnostics.extractionSucceededArticles += 1;
+      if (llmService && questionStore && savedArticles.length > 0) {
+        const extractionQuery = query === "" ? "面经" : query;
+        const extractionOutcomes = await mapWithConcurrency(
+          savedArticles,
+          extractionConcurrency,
+          async (articleRecord) => {
+            try {
+              const { extraction } = await llmService.extractQuestions({
+                query: extractionQuery,
+                title: articleRecord.title,
+                text: articleRecord.text
+              });
+              return {
+                articleRecord,
+                questions: Array.isArray(extraction.questions) ? extraction.questions : []
+              };
+            } catch (extractErr) {
+              return {
+                articleRecord,
+                questions: [],
+                error: extractErr
+              };
             }
-            const provenance = {
-              query: partitionQuery,
-              source: "nowcoder",
-              sourceUrl: articleRecord.sourceUrl,
-              sourceTitle: articleRecord.title
-            };
-            const ts = now();
-            for (const item of extractionQuestions) {
-              let record;
-              try {
-                record = extractionItemToQuestionRecord(item, provenance, { now: ts });
-              } catch {
-                diagnostics.questionValidationSkipped += 1;
-                continue;
-              }
-              try {
-                await questionStore.add(record);
-                savedQuestions.push(record);
-              } catch (err) {
-                if (err?.code !== "QUESTION_DUPLICATE_ID") {
-                  failed.push({
-                    url: articleRecord.sourceUrl,
-                    code: err?.code ?? "QUESTION_STORE_FAILED",
-                    message: err?.message ?? String(err)
-                  });
-                } else {
-                  diagnostics.questionStoreDuplicates += 1;
-                }
-              }
-            }
-          } catch (extractErr) {
+          }
+        );
+
+        diagnostics.extractionAttempted = savedArticles.length;
+        for (const outcome of extractionOutcomes) {
+          const { articleRecord, questions, error } = outcome;
+          if (error) {
             diagnostics.extractionFailed += 1;
             failed.push({
               url: articleRecord.sourceUrl,
-              code: extractErr?.code ?? "EXTRACT_FAILED",
-              message: extractErr?.message ?? String(extractErr)
+              code: error?.code ?? "EXTRACT_FAILED",
+              message: error?.message ?? String(error)
             });
+            continue;
+          }
+          if (questions.length === 0) {
+            diagnostics.extractionNoQuestions += 1;
+            continue;
+          }
+          diagnostics.extractionSucceededArticles += 1;
+          const provenance = {
+            query: partitionQuery,
+            source: "nowcoder",
+            sourceUrl: articleRecord.sourceUrl,
+            sourceTitle: articleRecord.title
+          };
+          const ts = now();
+          for (const item of questions) {
+            let record;
+            try {
+              record = extractionItemToQuestionRecord(item, provenance, { now: ts });
+            } catch {
+              diagnostics.questionValidationSkipped += 1;
+              continue;
+            }
+            try {
+              await questionStore.add(record);
+              savedQuestions.push(record);
+            } catch (err) {
+              if (err?.code !== "QUESTION_DUPLICATE_ID") {
+                failed.push({
+                  url: articleRecord.sourceUrl,
+                  code: err?.code ?? "QUESTION_STORE_FAILED",
+                  message: err?.message ?? String(err)
+                });
+              } else {
+                diagnostics.questionStoreDuplicates += 1;
+              }
+            }
           }
         }
       }
@@ -357,5 +388,7 @@ export function createSourcesApi({
 export {
   NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT,
   NOWCODER_MAX_ARTICLES_HARD_CAP,
-  resolveMaxArticlesPerFetch
+  NOWCODER_EXTRACTION_CONCURRENCY_DEFAULT,
+  resolveMaxArticlesPerFetch,
+  resolveExtractionConcurrency
 };

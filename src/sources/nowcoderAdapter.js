@@ -14,6 +14,7 @@
 // as specification; we re-implement in Node to avoid a Python runtime).
 
 import { ValidationError } from "../domain/errors.js";
+import { mapWithConcurrency } from "../util/mapWithConcurrency.js";
 
 const DEFAULT_SEARCH_URL_TEMPLATE =
   "https://www.nowcoder.com/search/all?query={query}&type=all&searchType=%E9%A1%B6%E9%83%A8%E5%AF%BC%E8%88%AA%E6%A0%8F";
@@ -76,6 +77,8 @@ const EMBEDDED_STATE_RE =
 const SAFE_QUERY_RE = /^[\p{L}\p{N}_\-+.]{0,64}$/u;
 const MAX_LIST_PAGES = 8;
 const MAX_EMPTY_LIST_PAGES = 2;
+const FETCH_CONCURRENCY_DEFAULT = 4;
+const FETCH_CONCURRENCY_HARD_CAP = 8;
 
 function freshCandidateTarget({ maxArticles, classifyTitles }) {
   if (!classifyTitles) return maxArticles;
@@ -280,6 +283,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function resolveFetchConcurrency(configured) {
+  const n = Number.parseInt(String(configured ?? ""), 10);
+  if (Number.isInteger(n) && n >= 1 && n <= FETCH_CONCURRENCY_HARD_CAP) {
+    return n;
+  }
+  return FETCH_CONCURRENCY_DEFAULT;
+}
+
 export function createNowCoderAdapter({
   httpFetch = defaultHttpFetch,
   jsonFetch = defaultJsonFetch,
@@ -287,8 +298,10 @@ export function createNowCoderAdapter({
   feedUrl = DEFAULT_FEED_URL,
   now = nowIso,
   delayMs = 0,
+  fetchConcurrency = FETCH_CONCURRENCY_DEFAULT,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 } = {}) {
+  const articleFetchConcurrency = delayMs > 0 ? 1 : resolveFetchConcurrency(fetchConcurrency);
   function buildSearchUrl(query) {
     return searchUrlTemplate.replace("{query}", encodeURIComponent(query));
   }
@@ -548,36 +561,32 @@ export function createNowCoderAdapter({
       if (fresh.length >= maxArticles) break;
     }
 
-    const records = [];
-    for (let i = 0; i < fresh.length; i += 1) {
-      if (records.length > 0 && delayMs > 0) await sleep(delayMs);
-      const cand = fresh[i];
+    const records = await mapWithConcurrency(fresh, articleFetchConcurrency, async (cand, i) => {
+      if (i > 0 && delayMs > 0) await sleep(delayMs);
       try {
         const page = await fetchHtml(cand.url);
-        records.push(
-          toArticleRecord({
-            url: page.finalUrl,
-            html: page.html,
-            storedQuery,
-            classifierTitle: cand.title || null
-          })
-        );
-        const last = records[records.length - 1];
-        if (last && !last.__error && cand.rawTitle && cand.rawTitle !== cand.title) {
-          last.rawMetadata = {
-            ...(last.rawMetadata ?? {}),
+        const record = toArticleRecord({
+          url: page.finalUrl,
+          html: page.html,
+          storedQuery,
+          classifierTitle: cand.title || null
+        });
+        if (cand.rawTitle && cand.rawTitle !== cand.title) {
+          record.rawMetadata = {
+            ...(record.rawMetadata ?? {}),
             listingText: cand.rawTitle
           };
         }
+        return record;
       } catch (err) {
-        records.push({
+        return {
           __error: true,
           url: cand.url,
           code: err?.code ?? "NOWCODER_ARTICLE_FAILED",
           message: err?.message ?? String(err)
-        });
+        };
       }
-    }
+    });
 
     return {
       entryUrl,

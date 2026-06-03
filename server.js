@@ -99,7 +99,17 @@ export function createAppServer({
   const settingsStore = createSettingsStore({ baseDir });
   // The caller can inject a mock adapter in tests; production uses the real
   // adapter wired to Node's global fetch.
-  const nowCoder = nowCoderAdapter ?? createNowCoderAdapter();
+  const nowcoderFetchConcurrency = Number.parseInt(
+    process.env.NOWCODER_FETCH_CONCURRENCY ?? "4",
+    10
+  );
+  const resolvedFetchConcurrency =
+    Number.isFinite(nowcoderFetchConcurrency) && nowcoderFetchConcurrency > 0
+      ? nowcoderFetchConcurrency
+      : 4;
+  const nowCoder =
+    nowCoderAdapter ??
+    createNowCoderAdapter({ fetchConcurrency: resolvedFetchConcurrency });
 
   // LLM service is held in a mutable cell so the settings API can swap it at
   // runtime without restarting the server. Three intake paths feed the cell:
@@ -186,7 +196,8 @@ export function createAppServer({
     nowcoderMaxArticlesPerFetch:
       Number.isFinite(nowcoderMaxArticles) && nowcoderMaxArticles > 0
         ? nowcoderMaxArticles
-        : 8
+        : 8,
+    nowcoderExtractionConcurrency: resolvedFetchConcurrency
   });
   const settingsApi = createSettingsApi({
     settingsStore,
