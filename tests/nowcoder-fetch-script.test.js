@@ -69,6 +69,7 @@ test("runFetchArticles saves feed records and skips them on the next run", async
     articleStore: store,
     adapter,
     targetNew: 2,
+    ttlDays: 0,
     now: () => "2026-05-05T10:00:00.000Z"
   });
   assert.equal(first.partitionQuery, FEED_QUERY_SENTINEL);
@@ -81,6 +82,7 @@ test("runFetchArticles saves feed records and skips them on the next run", async
     articleStore: store,
     adapter,
     targetNew: 2,
+    ttlDays: 0,
     now: () => "2026-05-05T10:10:00.000Z"
   });
   assert.equal(second.savedCount, 1);
@@ -148,6 +150,53 @@ test("runFetchArticles advances a cursor so the next run continues after the pre
   ]);
   assert.equal(calls[0].offset, 0);
   assert.equal(calls[1].offset, 2);
+});
+
+test("runFetchArticles persists nextOffset based on traversed candidates, not only saved ones", async () => {
+  const dir = await tempDir();
+  const store = createArticleStore({ baseDir: dir });
+  await store.append({
+    id: "seed-old-1",
+    ...record("https://www.nowcoder.com/discuss/1", "旧链接 1")
+  });
+
+  const adapter = {
+    async searchAndFetch({ offset }) {
+      assert.equal(offset, 0);
+      return {
+        mode: "feed",
+        entryUrl: NOWCODER_EXPERIENCE_JOBS[DEFAULT_JOB],
+        offset,
+        nextOffset: 3,
+        candidates: [
+          { url: "https://www.nowcoder.com/discuss/1", title: "旧链接 1" },
+          { url: "https://www.nowcoder.com/discuss/2", title: "新链接 2" },
+          { url: "https://www.nowcoder.com/discuss/3", title: "新链接 3" }
+        ],
+        skipped: ["https://www.nowcoder.com/discuss/1"],
+        records: [
+          record("https://www.nowcoder.com/discuss/2", "新链接 2"),
+          record("https://www.nowcoder.com/discuss/3", "新链接 3")
+        ]
+      };
+    }
+  };
+
+  const first = await runFetchArticles({
+    dataDir: dir,
+    articleStore: store,
+    adapter,
+    targetNew: 2
+  });
+  const second = await runFetchArticles({
+    dataDir: dir,
+    articleStore: store,
+    adapter,
+    targetNew: 2
+  });
+
+  assert.equal(first.nextOffset, 3);
+  assert.equal(second.offset, 3);
 });
 
 test("runFetchArticles dry-run does not advance the cursor", async () => {

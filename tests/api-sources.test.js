@@ -12,6 +12,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { withServer } from "./helpers/withServer.js";
 import { ValidationError } from "../src/domain/errors.js";
+import {
+  NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT,
+  resolveMaxArticlesPerFetch
+} from "../src/api/sources.js";
 
 async function makeBase() {
   return await mkdtemp(join(tmpdir(), "itw-api-sources-"));
@@ -25,6 +29,12 @@ function mockAdapter(response) {
     }
   };
 }
+
+test("resolveMaxArticlesPerFetch clamps to 1–20 and defaults invalid input", () => {
+  assert.equal(resolveMaxArticlesPerFetch(12), 12);
+  assert.equal(resolveMaxArticlesPerFetch(0), NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT);
+  assert.equal(resolveMaxArticlesPerFetch(99), NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT);
+});
 
 test("POST /api/sources/nowcoder/fetch saves fetched articles and returns a summary", async () => {
   const baseDir = await makeBase();
@@ -252,13 +262,14 @@ test("re-fetching the same query passes existing sourceUrls to the adapter and r
   const baseDir = await makeBase();
   try {
     // First call: returns one article; saved into the store.
+    const fetchedAt = new Date().toISOString();
     const articleA = {
       source: "nowcoder",
       sourceUrl: "https://www.nowcoder.com/discuss/A",
       query: "mysql",
       title: "字节",
       text: "正文 A",
-      fetchedAt: "2026-05-05T10:00:00Z",
+      fetchedAt,
       rawMetadata: { interviewKeywords: [] }
     };
     const articleB = {
@@ -267,7 +278,7 @@ test("re-fetching the same query passes existing sourceUrls to the adapter and r
       query: "mysql",
       title: "美团",
       text: "正文 B",
-      fetchedAt: "2026-05-05T10:00:01Z",
+      fetchedAt,
       rawMetadata: { interviewKeywords: [] }
     };
 

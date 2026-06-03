@@ -85,7 +85,7 @@ test("POST /api/settings/llm rejects unsupported apiStyle", async () => {
   }
 });
 
-test("GET /api/settings/llm/models uses the saved OpenAI-compatible model endpoint", async () => {
+test("POST /api/settings/llm/models uses the saved OpenAI-compatible model endpoint", async () => {
   const baseDir = await makeBase();
   const originalFetch = globalThis.fetch;
   try {
@@ -114,7 +114,11 @@ test("GET /api/settings/llm/models uses the saved OpenAI-compatible model endpoi
         return originalFetch(url, options);
       };
 
-      const response = await fetch(`${baseUrl}/api/settings/llm/models`);
+      const response = await fetch(`${baseUrl}/api/settings/llm/models`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
       const body = await response.json();
 
       assert.equal(response.status, 200);
@@ -124,6 +128,142 @@ test("GET /api/settings/llm/models uses the saved OpenAI-compatible model endpoi
     }, { baseDir });
   } finally {
     globalThis.fetch = originalFetch;
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/settings/llm/models falls back to env config when no key is saved", async () => {
+  const baseDir = await makeBase();
+  const originalFetch = globalThis.fetch;
+  const previousEnv = {
+    LLM_API_KEY: process.env.LLM_API_KEY,
+    LLM_BASE_URL: process.env.LLM_BASE_URL,
+    LLM_MODEL: process.env.LLM_MODEL,
+    LLM_API_STYLE: process.env.LLM_API_STYLE,
+    LLM_REASONING_EFFORT: process.env.LLM_REASONING_EFFORT
+  };
+  process.env.LLM_API_KEY = "sk-env-secret";
+  process.env.LLM_BASE_URL = "https://env-models.example.com/v1";
+  delete process.env.LLM_MODEL;
+  delete process.env.LLM_API_STYLE;
+  delete process.env.LLM_REASONING_EFFORT;
+
+  try {
+    await withServer(async (baseUrl) => {
+      const modelRequests = [];
+      globalThis.fetch = async (url, options = {}) => {
+        const href = String(url);
+        if (href === "https://env-models.example.com/v1/models") {
+          modelRequests.push({ url: href, options });
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ data: [{ id: "env-model" }] }),
+            text: async () => ""
+          };
+        }
+        return originalFetch(url, options);
+      };
+
+      const response = await fetch(`${baseUrl}/api/settings/llm/models`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(body.models, ["env-model"]);
+      assert.equal(modelRequests.length, 1);
+      assert.equal(modelRequests[0].options.headers.Authorization, "Bearer sk-env-secret");
+    }, { baseDir });
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/settings/llm/models uses transient form config without saving it", async () => {
+  const baseDir = await makeBase();
+  const originalFetch = globalThis.fetch;
+  const previousEnv = {
+    LLM_API_KEY: process.env.LLM_API_KEY,
+    LLM_BASE_URL: process.env.LLM_BASE_URL,
+    LLM_MODEL: process.env.LLM_MODEL,
+    LLM_API_STYLE: process.env.LLM_API_STYLE,
+    LLM_REASONING_EFFORT: process.env.LLM_REASONING_EFFORT
+  };
+  process.env.LLM_API_KEY = "sk-env-secret";
+  process.env.LLM_BASE_URL = "https://env-models.example.com/v1";
+  delete process.env.LLM_MODEL;
+  delete process.env.LLM_API_STYLE;
+  delete process.env.LLM_REASONING_EFFORT;
+
+  try {
+    await withServer(async (baseUrl) => {
+      const modelRequests = [];
+      globalThis.fetch = async (url, options = {}) => {
+        const href = String(url);
+        if (href === "https://transient-models.example.com/v1/models") {
+          modelRequests.push({ url: href, options });
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ data: [{ id: "transient-model" }] }),
+            text: async () => ""
+          };
+        }
+        return originalFetch(url, options);
+      };
+
+      const response = await fetch(`${baseUrl}/api/settings/llm/models`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          apiKey: "sk-transient-secret",
+          baseURL: "https://transient-models.example.com/v1"
+        })
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(body.models, ["transient-model"]);
+      assert.equal(modelRequests.length, 1);
+      assert.equal(
+        modelRequests[0].options.headers.Authorization,
+        "Bearer sk-transient-secret"
+      );
+
+      const settingsResponse = await fetch(`${baseUrl}/api/settings/llm`);
+      const settingsBody = await settingsResponse.json();
+      assert.equal(settingsBody.llm.apiKeyMasked, "sk-••••cret");
+      await assert.rejects(readFile(join(baseDir, "settings.json"), "utf8"), { code: "ENOENT" });
+    }, { baseDir });
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/settings/llm/models is no longer a supported model fetch route", async () => {
+  const baseDir = await makeBase();
+  try {
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/settings/llm/models`);
+      const body = await response.json();
+
+      assert.equal(response.status, 404);
+      assert.equal(body.code, "API_NOT_FOUND");
+    }, { baseDir });
+  } finally {
     await rm(baseDir, { recursive: true, force: true });
   }
 });

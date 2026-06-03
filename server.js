@@ -134,14 +134,19 @@ export function createAppServer({
     });
   }
 
+  const envConfig = {
+    apiKey: process.env.LLM_API_KEY,
+    baseURL: process.env.LLM_BASE_URL,
+    model: process.env.LLM_MODEL,
+    apiStyle: process.env.LLM_API_STYLE,
+    reasoningEffort: process.env.LLM_REASONING_EFFORT
+  };
+
+  function mergeLlmConfig(defaultConfig, savedConfig) {
+    return { ...(defaultConfig ?? {}), ...(savedConfig ?? {}) };
+  }
+
   if (!llmHolder.current) {
-    const envConfig = {
-      apiKey: process.env.LLM_API_KEY,
-      baseURL: process.env.LLM_BASE_URL,
-      model: process.env.LLM_MODEL,
-      apiStyle: process.env.LLM_API_STYLE,
-      reasoningEffort: process.env.LLM_REASONING_EFFORT
-    };
     if (envConfig.apiKey) {
       llmHolder.current = buildLlmServiceFromConfig(envConfig);
     }
@@ -167,16 +172,25 @@ export function createAppServer({
   });
   const cardsApi = createCardsApi({ questionStore, attemptStore, scoreStore, cardStore });
   const ttlDays = Number.parseInt(process.env.NOWCODER_ARTICLE_TTL_DAYS ?? "14", 10);
+  const nowcoderMaxArticles = Number.parseInt(
+    process.env.NOWCODER_MAX_ARTICLES_PER_FETCH ?? "8",
+    10
+  );
   const sourcesApi = createSourcesApi({
     nowCoderAdapter: nowCoder,
     articleStore,
     questionStore,
     crawlCursorStore,
     getLlmService,
-    ttlDays: Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays : 14
+    ttlDays: Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays : 14,
+    nowcoderMaxArticlesPerFetch:
+      Number.isFinite(nowcoderMaxArticles) && nowcoderMaxArticles > 0
+        ? nowcoderMaxArticles
+        : 8
   });
   const settingsApi = createSettingsApi({
     settingsStore,
+    defaultLlmConfig: envConfig,
     onLlmConfigChange: (config) => {
       llmHolder.current = config?.apiKey ? buildLlmServiceFromConfig(config) : null;
     }
@@ -188,8 +202,9 @@ export function createAppServer({
     .read()
     .then((settings) => {
       const cfg = settings?.llm;
-      if (cfg?.apiKey) {
-        llmHolder.current = buildLlmServiceFromConfig(cfg);
+      const effective = mergeLlmConfig(envConfig, cfg);
+      if (cfg && Object.keys(cfg).length > 0 && effective.apiKey) {
+        llmHolder.current = buildLlmServiceFromConfig(effective);
       }
     })
     .catch((err) => {
@@ -223,7 +238,7 @@ export function createAppServer({
       return;
     }
 
-    if (url.pathname === "/api/settings/llm/models" && req.method === "GET") {
+    if (url.pathname === "/api/settings/llm/models" && req.method === "POST") {
       await settingsApi.handleFetchModels(req, res);
       return;
     }

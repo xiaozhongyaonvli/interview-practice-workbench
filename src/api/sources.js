@@ -26,10 +26,10 @@ import { FEED_QUERY_SENTINEL } from "../sources/nowcoderAdapter.js";
 import { autoPurgeIgnored } from "./questions.js";
 import { readJsonBody, sendJson, sendError } from "./http.js";
 
-// Hard cap: every fetch returns at most this many fresh articles. The UI no
-// longer exposes a knob — 2 is enough for one LLM extraction round and keeps
-// the tab-switch loop snappy.
-const NOWCODER_MAX_ARTICLES_PER_FETCH = 2;
+// Default cap: fresh articles per fetch (each may yield up to ~12 questions via
+// LLM extraction). Override with NOWCODER_MAX_ARTICLES_PER_FETCH env (1–20).
+const NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT = 8;
+const NOWCODER_MAX_ARTICLES_HARD_CAP = 20;
 
 // Empty string is allowed (feed mode); otherwise only safe word chars.
 const SAFE_QUERY_OR_EMPTY = /^[\p{L}\p{N}_-]{0,64}$/u;
@@ -55,6 +55,14 @@ function defaultLocalDateKey() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function resolveMaxArticlesPerFetch(configured) {
+  const n = Number.parseInt(String(configured ?? ""), 10);
+  if (Number.isInteger(n) && n >= 1 && n <= NOWCODER_MAX_ARTICLES_HARD_CAP) {
+    return n;
+  }
+  return NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT;
+}
+
 export function createSourcesApi({
   nowCoderAdapter,
   articleStore,
@@ -62,6 +70,7 @@ export function createSourcesApi({
   crawlCursorStore = null,
   getLlmService = () => null,
   ttlDays = 14,
+  nowcoderMaxArticlesPerFetch = NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT,
   now = () => new Date().toISOString(),
   today = defaultLocalDateKey
 }) {
@@ -82,8 +91,7 @@ export function createSourcesApi({
           { code: "NOWCODER_INPUT_INVALID", path: "query" }
         );
       }
-      // body.maxArticles is intentionally ignored — the constant rules to
-      // keep the UI honest. We accept the field silently for back-compat.
+      const maxArticlesPerFetch = resolveMaxArticlesPerFetch(nowcoderMaxArticlesPerFetch);
 
       // 1. Prune. Failure here must NOT block the fetch — log and continue.
       let prunedArticles = 0;
@@ -153,7 +161,7 @@ export function createSourcesApi({
       // 8. Delegate to adapter — pinned to the constant cap.
       const result = await nowCoderAdapter.searchAndFetch({
         query,
-        maxArticles: NOWCODER_MAX_ARTICLES_PER_FETCH,
+        maxArticles: maxArticlesPerFetch,
         offset: cursorOffset,
         excludeUrls,
         classifyTitles
@@ -346,4 +354,8 @@ export function createSourcesApi({
   return { handleNowCoderFetch };
 }
 
-export { NOWCODER_MAX_ARTICLES_PER_FETCH };
+export {
+  NOWCODER_MAX_ARTICLES_PER_FETCH_DEFAULT,
+  NOWCODER_MAX_ARTICLES_HARD_CAP,
+  resolveMaxArticlesPerFetch
+};

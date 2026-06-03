@@ -78,13 +78,21 @@ function normalizeIncoming(body, current) {
   return next;
 }
 
-export function createSettingsApi({ settingsStore, onLlmConfigChange = () => {} }) {
+function mergeLlmConfig(defaultConfig, savedConfig) {
+  return { ...(defaultConfig ?? {}), ...(savedConfig ?? {}) };
+}
+
+export function createSettingsApi({
+  settingsStore,
+  defaultLlmConfig = {},
+  onLlmConfigChange = () => {}
+}) {
   if (!settingsStore) throw new Error("createSettingsApi: settingsStore is required");
 
   async function handleGetLlm(_req, res) {
     try {
       const settings = await settingsStore.read();
-      sendJson(res, 200, { llm: buildLlmView(settings.llm) });
+      sendJson(res, 200, { llm: buildLlmView(mergeLlmConfig(defaultLlmConfig, settings.llm)) });
     } catch (err) {
       sendError(res, err);
     }
@@ -96,17 +104,19 @@ export function createSettingsApi({ settingsStore, onLlmConfigChange = () => {} 
       const current = (await settingsStore.read()).llm ?? {};
       const next = normalizeIncoming(body, current);
       const saved = await settingsStore.writeLlm(next);
-      onLlmConfigChange(saved.llm);
-      sendJson(res, 200, { llm: buildLlmView(saved.llm) });
+      const effective = mergeLlmConfig(defaultLlmConfig, saved.llm);
+      onLlmConfigChange(effective);
+      sendJson(res, 200, { llm: buildLlmView(effective) });
     } catch (err) {
       sendError(res, err);
     }
   }
 
-  async function handleFetchModels(_req, res) {
+  async function handleFetchModels(req, res) {
     try {
       const settings = await settingsStore.read();
-      const cfg = settings.llm ?? {};
+      const transient = normalizeIncoming(await readJsonBody(req), {});
+      const cfg = mergeLlmConfig(mergeLlmConfig(defaultLlmConfig, settings.llm), transient);
       const apiKey = cfg.apiKey;
       if (!apiKey) {
         sendJson(res, 200, { models: [], message: "未配置 API Key" });

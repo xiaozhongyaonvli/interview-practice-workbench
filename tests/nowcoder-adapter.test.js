@@ -1,10 +1,9 @@
-// Unit tests for the NowCoder adapter.
-// The real HTTP layer is mocked via an injectable httpFetch so these tests
-// never hit the network.
-
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createNowCoderAdapter, DEFAULT_FEED_URL } from "../src/sources/nowcoderAdapter.js";
+import {
+  createNowCoderAdapter,
+  DEFAULT_FEED_URL
+} from "../src/sources/nowcoderAdapter.js";
 import { ValidationError } from "../src/domain/errors.js";
 
 function mockFetchByUrl(mapping) {
@@ -24,28 +23,32 @@ function mockFetchByUrl(mapping) {
 }
 
 const SEARCH_HTML_BASE = `<!doctype html>
-<html><head><title>搜索</title></head><body>
-<a href="/discuss/123">字节二面 MySQL 面经,问到索引和事务</a>
-<a href="/discuss/456">美团后端社招 面经,MySQL 锁和主从</a>
-<a href="https://other.com/x">external link,ignored</a>
-<a href="/some/unrelated/path">unrelated path,ignored</a>
+<html><head><title>search</title></head><body>
+<a href="/discuss/123">ByteDance MySQL interview notes</a>
+<a href="/discuss/456">Meituan backend interview notes</a>
+<a href="https://other.com/x">external link</a>
+<a href="/some/unrelated/path">unrelated path</a>
 </body></html>`;
 
 const ARTICLE_1 = `<!doctype html>
-<html><head><title>字节二面 MySQL 面经</title></head>
-<body><h1>字节二面</h1>
-<p>问了 MySQL 的 ACID 怎么保证,索引失效的情况...</p>
+<html><head><title>ByteDance MySQL interview notes</title></head>
+<body><h1>ByteDance</h1>
+<p>Asked about ACID and indexes.</p>
 <script>window.__INITIAL_STATE__ = {}</script>
 </body></html>`;
 
 const ARTICLE_2 = `<!doctype html>
-<html><head><title>美团社招面经</title></head>
-<body><p>主从延迟如何排查,锁等待。</p></body></html>`;
+<html><head><title>Meituan backend interview notes</title></head>
+<body><p>Asked about replication lag and locks.</p></body></html>`;
 
 test("searchAndFetch returns ArticleRecord-shaped objects for discovered links", async () => {
   const { httpFetch } = mockFetchByUrl({
     "https://www.nowcoder.com/search/all?query=mysql&type=all&searchType=%E9%A1%B6%E9%83%A8%E5%AF%BC%E8%88%AA%E6%A0%8F":
       SEARCH_HTML_BASE,
+    "https://www.nowcoder.com/search/all?query=mysql&type=all&searchType=%E9%A1%B6%E9%83%A8%E5%AF%BC%E8%88%AA%E6%A0%8F&page=2":
+      "<html><body></body></html>",
+    "https://www.nowcoder.com/search/all?query=mysql&type=all&searchType=%E9%A1%B6%E9%83%A8%E5%AF%BC%E8%88%AA%E6%A0%8F&page=3":
+      "<html><body></body></html>",
     "https://www.nowcoder.com/discuss/123": ARTICLE_1,
     "https://www.nowcoder.com/discuss/456": ARTICLE_2
   });
@@ -87,7 +90,7 @@ test("empty query uses the fresh interview-experience feed by default", () => {
 });
 
 test("empty query feed URL can be overridden for a different job track", () => {
-  const feedUrl = "https://www.nowcoder.com/discuss/experience?tagId=backend";
+  const feedUrl = "https://www.nowcoder.com/discuss/experience?tagId=777";
   const adapter = createNowCoderAdapter({
     feedUrl,
     httpFetch: async () => ({ status: 200, text: "" })
@@ -110,10 +113,8 @@ test("rejects a search-page HTTP failure with a visible error", async () => {
 test("per-article fetch failures are reported but do not abort the batch", async () => {
   const httpFetch = async (url) => {
     if (url.includes("/search/")) return { status: 200, text: SEARCH_HTML_BASE };
-    if (url.endsWith("/discuss/123"))
-      return { status: 200, text: ARTICLE_1 };
-    if (url.endsWith("/discuss/456"))
-      return { status: 502, text: "bad gateway" };
+    if (url.endsWith("/discuss/123")) return { status: 200, text: ARTICLE_1 };
+    if (url.endsWith("/discuss/456")) return { status: 502, text: "bad gateway" };
     return { status: 404, text: "" };
   };
   const adapter = createNowCoderAdapter({ httpFetch });
@@ -129,13 +130,12 @@ test("per-article fetch failures are reported but do not abort the batch", async
 test("maxArticles bounds the fetch count and sleep is called between fetches", async () => {
   const httpFetch = async (url) => {
     if (url.includes("/search/")) {
-      // 5 article links; adapter should only follow the first 2.
       const links = Array.from({ length: 5 }, (_, i) =>
-        `<a href="/discuss/${100 + i}">面经 #${i}</a>`
+        `<a href="/discuss/${100 + i}">interview #${i}</a>`
       ).join("\n");
       return { status: 200, text: `<html><body>${links}</body></html>` };
     }
-    return { status: 200, text: `<html><title>t</title><body>面经</body></html>` };
+    return { status: 200, text: "<html><title>t</title><body>interview</body></html>" };
   };
   const sleeps = [];
   const adapter = createNowCoderAdapter({
@@ -149,11 +149,10 @@ test("maxArticles bounds the fetch count and sleep is called between fetches", a
 
   const result = await adapter.searchAndFetch({ query: "mysql", maxArticles: 2 });
   assert.equal(result.records.length, 2);
-  // sleep called once between the two article fetches.
   assert.deepEqual(sleeps, [7]);
 });
 
-test("toArticleRecord strips script/style and preserves title", async () => {
+test("toArticleRecord strips script/style and preserves title", () => {
   const adapter = createNowCoderAdapter({
     httpFetch: async () => ({ status: 200, text: "" }),
     now: () => "T"
@@ -161,14 +160,14 @@ test("toArticleRecord strips script/style and preserves title", async () => {
   const record = adapter._internals.toArticleRecord({
     url: "https://www.nowcoder.com/discuss/1",
     html:
-      "<html><head><title>字节 MySQL 面经</title></head><body>" +
-      "<script>bad()</script><p>问题 1: ACID</p>" +
+      "<html><head><title>ByteDance MySQL interview</title></head><body>" +
+      "<script>bad()</script><p>Question 1: ACID</p>" +
       "<style>.x{color:red}</style>" +
       "</body></html>",
     storedQuery: "mysql"
   });
   assert.equal(record.source, "nowcoder");
-  assert.equal(record.title, "字节 MySQL 面经");
+  assert.equal(record.title, "ByteDance MySQL interview");
   assert.match(record.text, /ACID/);
   assert.doesNotMatch(record.text, /bad\(\)/);
   assert.doesNotMatch(record.text, /color:red/);
@@ -182,12 +181,12 @@ test("toArticleRecord prefers detail page title over listing preview text", () =
   const record = adapter._internals.toArticleRecord({
     url: "https://www.nowcoder.com/feed/main/detail/abc",
     html:
-      "<html><head><meta property=\"og:title\" content=\"字节后端开发一面面经_牛客网\"></head>" +
-      "<body>正文 问了 Redis 和 MySQL。</body></html>",
+      "<html><head><meta property=\"og:title\" content=\"Detailed title - 牛客网\"></head>" +
+      "<body>正文 Redis and MySQL</body></html>",
     storedQuery: "__feed__",
-    classifierTitle: "一面 1.volatile原理2.ThreadLocal原理3.Mysql中的事务隔离级别4.可重复读和读已提交区别"
+    classifierTitle: "listing preview"
   });
-  assert.equal(record.title, "字节后端开发一面面经");
+  assert.equal(record.title, "Detailed title");
 });
 
 test("discoverArticleCandidates deduplicates trailing query strings", () => {
@@ -211,8 +210,7 @@ test("discoverArticleCandidates deduplicates trailing query strings", () => {
 test("discoverArticleCandidates trims long feed previews into short titles", () => {
   const adapter = createNowCoderAdapter({ httpFetch: async () => ({ status: 200, text: "" }) });
   const longPreview =
-    "一面 1.volatile原理2.ThreadLocal原理3.Mysql中的事务隔离级别4.可重复读和读已提交区别" +
-    "5.可重复读可以解决幻觉问题吗6.手撕：三数之和二面一、 Agent 项目与大模型相关";
+    "This is a very long listing preview that should be trimmed before it is used as a candidate title because it contains too much detail.";
   const candidates = adapter._internals.discoverArticleCandidates(
     `<a href="/feed/main/detail/c326baa3dac7472d89066c80b8749bdc">${longPreview}</a>`,
     "https://www.nowcoder.com/discuss/experience?tagId=639"
@@ -223,27 +221,51 @@ test("discoverArticleCandidates trims long feed previews into short titles", () 
   assert.equal(candidates[0].rawTitle, longPreview);
 });
 
+test("discoverArticleCandidatesFromEmbeddedState parses SSR state payloads", () => {
+  const adapter = createNowCoderAdapter({ httpFetch: async () => ({ status: 200, text: "" }) });
+  const html = `
+    <html><body>
+    <script>window.__INITIAL_STATE__ = {"experience":{"experienceData":{"contentList":[
+      {"contentId":"2846183","momentData":{"title":"Insurance Java role"}},
+      {"contentId":"2845869","momentData":{"title":"Sida round one"}},
+      {"contentId":"2846183","momentData":{"title":"duplicate"}}
+    ]}}};</script>
+    </body></html>
+  `;
+  const candidates = adapter._internals.discoverArticleCandidatesFromEmbeddedState(
+    html,
+    "https://www.nowcoder.com/discuss/experience?tagId=639&page=2"
+  );
+  assert.deepEqual(
+    candidates.map((c) => c.url),
+    [
+      "https://www.nowcoder.com/discuss/2846183",
+      "https://www.nowcoder.com/discuss/2845869"
+    ]
+  );
+  assert.equal(candidates[0].rawTitle, "Insurance Java role");
+});
+
 test("searchAndFetch keeps full listing text in metadata when candidate title was shortened", async () => {
   const listingText =
-    "一面 1.volatile原理2.ThreadLocal原理3.Mysql中的事务隔离级别4.可重复读和读已提交区别" +
-    "5.可重复读可以解决幻觉问题吗6.手撕：三数之和";
-  const searchHtml = `<a href="/feed/main/detail/abc123">${listingText}</a>`;
+    "This is an overlong preview line that should be shortened for the candidate title but still preserved in metadata.";
+  const searchHtml = `<a href="/discuss/999">${listingText}</a>`;
   const articleHtml =
-    "<html><head><title>详情标题</title></head><body>正文 问了 Redis 和 MySQL。</body></html>";
+    "<html><head><title>Detailed title</title></head><body>Redis and MySQL正文</body></html>";
   const adapter = createNowCoderAdapter({
     httpFetch: async (url) => {
-      if (url.includes("/discuss/experience")) return { status: 200, text: searchHtml, url };
+      if (url.includes("/search/all")) return { status: 200, text: searchHtml, url };
       return { status: 200, text: articleHtml, url };
     }
   });
 
-  const result = await adapter.searchAndFetch({ query: "", maxArticles: 1 });
+  const result = await adapter.searchAndFetch({ query: "redis", maxArticles: 1 });
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0].rawMetadata.listingText, listingText);
   assert.ok(result.records[0].rawMetadata.listingText.length > result.records[0].title.length);
 });
 
-test("excludeUrls skips already-known links and reports them as `skipped`", async () => {
+test("excludeUrls skips already-known links and reports them as skipped", async () => {
   const fetchedUrls = [];
   const httpFetch = async (url) => {
     fetchedUrls.push(url);
@@ -260,20 +282,14 @@ test("excludeUrls skips already-known links and reports them as `skipped`", asyn
     excludeUrls: ["https://www.nowcoder.com/discuss/123"]
   });
 
-  // The adapter must NOT have requested /discuss/123 — only /discuss/456.
-  assert.ok(
-    !fetchedUrls.some((u) => u.endsWith("/discuss/123")),
-    "excluded URL must not be re-fetched"
-  );
+  assert.ok(!fetchedUrls.some((u) => u.endsWith("/discuss/123")));
   assert.ok(fetchedUrls.some((u) => u.endsWith("/discuss/456")));
-
-  // Only the fresh one ends up in records / links.
   assert.equal(result.records.length, 1);
   assert.equal(result.links.length, 1);
   assert.deepEqual(result.skipped, ["https://www.nowcoder.com/discuss/123"]);
 });
 
-test("excludeUrls=[] (default) preserves the original behavior — every link is fetched", async () => {
+test("excludeUrls default preserves the original behavior", async () => {
   const httpFetch = async (url) => {
     if (url.includes("/search/")) return { status: 200, text: SEARCH_HTML_BASE };
     if (url.endsWith("/discuss/123")) return { status: 200, text: ARTICLE_1 };
@@ -283,4 +299,165 @@ test("excludeUrls=[] (default) preserves the original behavior — every link is
   const result = await adapter.searchAndFetch({ query: "mysql", maxArticles: 5 });
   assert.equal(result.records.length, 2);
   assert.deepEqual(result.skipped, []);
+});
+
+test("feed mode fetches page 2 from the JSON list API when page 1 candidates are insufficient", async () => {
+  const calls = [];
+  const adapter = createNowCoderAdapter({
+    jsonFetch: async (url, { body }) => {
+      const payload = JSON.parse(body);
+      calls.push({ url, payload });
+      if (payload.page === 1) {
+        return {
+          status: 200,
+          text: JSON.stringify({
+            success: true,
+            data: {
+              records: [{ contentId: "8761", momentData: { id: 101, title: "page1-1" } }]
+            }
+          }),
+          url
+        };
+      }
+      if (payload.page === 2) {
+        return {
+          status: 200,
+          text: JSON.stringify({
+            success: true,
+            data: {
+              records: [
+                { contentId: "8762", momentData: { id: 201, title: "page2-1" } },
+                { contentId: "8763", momentData: { id: 202, title: "page2-2" } }
+              ]
+            }
+          }),
+          url
+        };
+      }
+      return {
+        status: 200,
+        text: JSON.stringify({ success: true, data: { records: [] } }),
+        url
+      };
+    },
+    httpFetch: async (url) => ({
+      status: 200,
+      text: "<html><head><title>detail</title></head><body>interview body</body></html>",
+      url
+    })
+  });
+
+  const result = await adapter.searchAndFetch({ query: "", maxArticles: 2 });
+  assert.equal(result.records.length, 2);
+  assert.ok(calls.some((entry) => entry.payload.page === 2));
+  assert.equal(calls[0].payload.jobId, 639);
+  assert.deepEqual(result.links, [
+    "https://www.nowcoder.com/discuss/101",
+    "https://www.nowcoder.com/discuss/201"
+  ]);
+});
+
+test("nextOffset advances by traversed feed candidates including skipped old links", async () => {
+  const adapter = createNowCoderAdapter({
+    jsonFetch: async (url, { body }) => {
+      const payload = JSON.parse(body);
+      if (payload.page === 1) {
+        return {
+          status: 200,
+          text: JSON.stringify({
+            success: true,
+            data: {
+              records: [
+                { contentId: "8761", momentData: { id: 101, title: "page1-1" } },
+                { contentId: "8762", momentData: { id: 102, title: "page1-2" } },
+                { contentId: "8763", momentData: { id: 103, title: "page1-3" } }
+              ]
+            }
+          }),
+          url
+        };
+      }
+      return {
+        status: 200,
+        text: JSON.stringify({ success: true, data: { records: [] } }),
+        url
+      };
+    },
+    httpFetch: async (url) => ({
+      status: 200,
+      text: "<html><head><title>detail</title></head><body>interview body</body></html>",
+      url
+    })
+  });
+
+  const result = await adapter.searchAndFetch({
+    query: "",
+    maxArticles: 2,
+    excludeUrls: ["https://www.nowcoder.com/discuss/101"]
+  });
+  assert.deepEqual(result.skipped, ["https://www.nowcoder.com/discuss/101"]);
+  assert.deepEqual(result.links, [
+    "https://www.nowcoder.com/discuss/102",
+    "https://www.nowcoder.com/discuss/103"
+  ]);
+  assert.equal(result.nextOffset, 3);
+});
+
+test("classifyTitles uses a wider pool so rejected titles do not shrink the fetch quota", async () => {
+  const records = [
+    { contentId: "1", momentData: { id: 101, title: "noise-1" } },
+    { contentId: "2", momentData: { id: 102, title: "字节一面 MySQL" } },
+    { contentId: "3", momentData: { id: 103, title: "noise-2" } },
+    { contentId: "4", momentData: { id: 104, title: "美团 Java 二面" } },
+    { contentId: "5", momentData: { id: 105, title: "noise-3" } },
+    { contentId: "6", momentData: { id: 106, title: "腾讯后台开发一面" } }
+  ];
+  const adapter = createNowCoderAdapter({
+    jsonFetch: async (url, { body }) => {
+      const payload = JSON.parse(body);
+      if (payload.page !== 1) {
+        return {
+          status: 200,
+          text: JSON.stringify({ success: true, data: { records: [] } }),
+          url
+        };
+      }
+      return {
+        status: 200,
+        text: JSON.stringify({ success: true, data: { records } }),
+        url
+      };
+    },
+    httpFetch: async (url) => ({
+      status: 200,
+      text: "<html><head><title>detail</title></head><body>面经正文</body></html>",
+      url
+    })
+  });
+
+  const result = await adapter.searchAndFetch({
+    query: "",
+    maxArticles: 2,
+    classifyTitles: async (titles) => titles.map((t) => !String(t).startsWith("noise"))
+  });
+
+  assert.equal(result.records.length, 2);
+  assert.deepEqual(
+    result.records.map((r) => r.sourceUrl),
+    [
+      "https://www.nowcoder.com/discuss/102",
+      "https://www.nowcoder.com/discuss/104"
+    ]
+  );
+  assert.equal(result.classifiedNo.length, 3);
+  assert.equal(result.links.length, 2);
+});
+
+test("feedJobIdFromUrl reads numeric tagId from the feed URL", () => {
+  const adapter = createNowCoderAdapter({ httpFetch: async () => ({ status: 200, text: "" }) });
+  assert.equal(adapter._internals.feedJobIdFromUrl(DEFAULT_FEED_URL), 639);
+  assert.equal(
+    adapter._internals.feedJobIdFromUrl("https://www.nowcoder.com/discuss/experience"),
+    null
+  );
 });

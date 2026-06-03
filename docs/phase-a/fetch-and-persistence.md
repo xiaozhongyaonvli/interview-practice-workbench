@@ -4,7 +4,8 @@
 
 ## NowCoder 抓取
 
-- [x] 每次最多保存 2 篇 fresh article。
+- [x] 每次最多保存 8 篇 fresh article（可用 `NOWCODER_MAX_ARTICLES_PER_FETCH` 调到 1–20）。
+- [x] 启用标题分类时，会先扫更大候选池再取满配额，避免「非面经」标题占掉篇数。
 - [x] 支持搜索 query。
 - [x] query 为空时进入 feed 模式。
 - [x] feed 模式使用 `__feed__` 作为问题和文章分区。
@@ -51,7 +52,7 @@ cursor key 使用本地日期：
 
 ## 不做
 
-- [ ] 抓取篇数配置项。
+- [x] 抓取篇数环境变量 `NOWCODER_MAX_ARTICLES_PER_FETCH`（无 UI 旋钮）。
 - [ ] 复杂文章调度器。
 - [ ] ignored 的长期回收站。
 - [ ] 孤儿 attempts / scores 的独立浏览入口。

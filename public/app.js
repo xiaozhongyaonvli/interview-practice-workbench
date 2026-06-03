@@ -321,7 +321,22 @@ document.querySelector("[data-fetch-models]")?.addEventListener("click", async (
   btn.textContent = "加载中…";
   if (statusEl) { statusEl.hidden = false; statusEl.textContent = ""; }
   try {
-    const res = await fetch("/api/settings/llm/models");
+    const payload = {};
+    if (settingsForm) {
+      const fd = new FormData(settingsForm);
+      payload.baseURL = fd.get("baseURL") ?? "";
+      payload.model = fd.get("model") ?? "";
+      payload.apiStyle = fd.get("apiStyle") ?? "";
+      payload.reasoningEffort = fd.get("reasoningEffort") ?? "";
+      const apiKey = String(fd.get("apiKey") ?? "").trim();
+      if (apiKey) payload.apiKey = apiKey;
+    }
+
+    const res = await fetch("/api/settings/llm/models", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.message) {
@@ -1859,7 +1874,7 @@ if (nowcoderForm) {
     const data = new FormData(nowcoderForm);
     const query = String(data.get("query") ?? "").trim();
     // empty query is allowed — server treats it as 面经 feed mode.
-    // maxArticles is no longer a UI knob; the server pins it to 2.
+    // maxArticles is configured server-side (default 8, env NOWCODER_MAX_ARTICLES_PER_FETCH).
     try {
       const response = await fetch("/api/sources/nowcoder/fetch", {
         method: "POST",

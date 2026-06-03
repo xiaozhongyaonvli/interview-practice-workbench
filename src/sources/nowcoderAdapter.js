@@ -17,6 +17,8 @@ import { ValidationError } from "../domain/errors.js";
 
 const DEFAULT_SEARCH_URL_TEMPLATE =
   "https://www.nowcoder.com/search/all?query={query}&type=all&searchType=%E9%A1%B6%E9%83%A8%E5%AF%BC%E8%88%AA%E6%A0%8F";
+const FEED_LIST_API_URL =
+  "https://gw-c.nowcoder.com/api/sparta/job-experience/experience/job/list";
 
 // Empty-query mode: hit NowCoder's fresh interview-experience listing instead
 // of the broad discuss feed. The tagId keeps this scoped to a backend-ish
@@ -35,6 +37,13 @@ const DEFAULT_HEADERS = Object.freeze({
   Accept:
     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
+  Referer: "https://www.nowcoder.com/"
+});
+const JSON_HEADERS = Object.freeze({
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
+  "Content-Type": "application/json",
+  "X-Requested-With": "XMLHttpRequest",
   Referer: "https://www.nowcoder.com/"
 });
 
@@ -59,10 +68,20 @@ const ANCHOR_RE = /<a\b[^>]*\bhref\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
 const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i;
 const META_TITLE_RE =
   /<meta\b[^>]*(?:property|name)\s*=\s*["'](?:og:title|twitter:title|title)["'][^>]*\bcontent\s*=\s*["']([^"']+)["'][^>]*>/i;
+const EMBEDDED_STATE_RE =
+  /<script[^>]*>\s*window\.__INITIAL_STATE__\s*=\s*([\s\S]*?)<\/script>/i;
 // Accept Unicode letters/digits plus + and . (for "node.js" / "c++"); still
 // rejects shell metachars, path separators, whitespace. Empty string is
 // allowed at this layer — the API caller maps "" to feed mode.
 const SAFE_QUERY_RE = /^[\p{L}\p{N}_\-+.]{0,64}$/u;
+const MAX_LIST_PAGES = 8;
+const MAX_EMPTY_LIST_PAGES = 2;
+
+function freshCandidateTarget({ maxArticles, classifyTitles }) {
+  if (!classifyTitles) return maxArticles;
+  // Classify a wider pool so rejected titles do not waste the article quota.
+  return Math.min(20, Math.max(maxArticles, maxArticles * 3));
+}
 
 function decodeEntities(value) {
   // Minimal entity decoder — enough for NowCoder titles.
@@ -135,6 +154,27 @@ function absoluteUrl(href, base) {
   }
 }
 
+function buildPagedUrl(url, page) {
+  const parsed = new URL(url);
+  if (page <= 1) {
+    parsed.searchParams.delete("page");
+    return parsed.toString();
+  }
+  parsed.searchParams.set("page", String(page));
+  return parsed.toString();
+}
+
+function feedJobIdFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const tagId = parsed.searchParams.get("tagId");
+    if (!tagId || !/^\d+$/.test(tagId)) return null;
+    return Number(tagId);
+  } catch {
+    return null;
+  }
+}
+
 function isInterviewRelated({ title, text }) {
   const haystack = `${title}\n${text}`;
   return INTERVIEW_KEYWORDS.filter((k) => haystack.includes(k));
@@ -173,9 +213,63 @@ function discoverArticleCandidates(html, baseUrl) {
   }));
 }
 
+function discoverArticleCandidatesFromEmbeddedState(html, baseUrl) {
+  const match = EMBEDDED_STATE_RE.exec(String(html));
+  if (!match?.[1]) return [];
+
+  const candidates = [];
+  const itemRe =
+    /"contentId":"?(\d+)"?[\s\S]{0,500}?"momentData":\{[\s\S]{0,4000}?"title":"((?:\\.|[^"\\])*)"/g;
+  let itemMatch;
+  while ((itemMatch = itemRe.exec(match[1])) !== null) {
+    const url = absoluteUrl(`/discuss/${itemMatch[1]}`, baseUrl);
+    if (!url) continue;
+    const rawTitle = normalizeWhitespace(JSON.parse(`"${itemMatch[2]}"`));
+    candidates.push({
+      url,
+      title: shortCandidateTitle(rawTitle),
+      rawTitle
+    });
+  }
+
+  const seen = new Map();
+  for (const candidate of candidates) {
+    if (!seen.has(candidate.url)) {
+      seen.set(candidate.url, candidate);
+    }
+  }
+  return [...seen.values()];
+}
+
+function mergeCandidates(...candidateLists) {
+  const seen = new Map();
+  for (const list of candidateLists) {
+    for (const candidate of list) {
+      if (!candidate?.url) continue;
+      if (!seen.has(candidate.url)) {
+        seen.set(candidate.url, candidate);
+      } else if (!seen.get(candidate.url).title && candidate.title) {
+        seen.set(candidate.url, candidate);
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
 async function defaultHttpFetch(url, { headers, signal } = {}) {
   const response = await fetch(url, {
     headers: { ...DEFAULT_HEADERS, ...(headers ?? {}) },
+    signal
+  });
+  const text = await response.text();
+  return { status: response.status, text, url };
+}
+
+async function defaultJsonFetch(url, { method = "GET", headers, body, signal } = {}) {
+  const response = await fetch(url, {
+    method,
+    headers: { ...JSON_HEADERS, ...(headers ?? {}) },
+    body,
     signal
   });
   const text = await response.text();
@@ -188,6 +282,7 @@ function nowIso() {
 
 export function createNowCoderAdapter({
   httpFetch = defaultHttpFetch,
+  jsonFetch = defaultJsonFetch,
   searchUrlTemplate = DEFAULT_SEARCH_URL_TEMPLATE,
   feedUrl = DEFAULT_FEED_URL,
   now = nowIso,
@@ -217,6 +312,65 @@ export function createNowCoderAdapter({
       );
     }
     return { html: String(response.text ?? ""), finalUrl: response.url ?? url };
+  }
+
+  async function fetchJson(url, { method = "GET", body } = {}) {
+    const response = await jsonFetch(url, { method, body, headers: JSON_HEADERS });
+    if (!response || typeof response !== "object") {
+      throw new ValidationError("jsonFetch returned non-object response", {
+        code: "NOWCODER_FETCH_FAILED",
+        path: "response"
+      });
+    }
+    if (response.status >= 400) {
+      throw new ValidationError(
+        `NowCoder responded with HTTP ${response.status}`,
+        { code: "NOWCODER_FETCH_FAILED", path: "status", value: response.status }
+      );
+    }
+    try {
+      return JSON.parse(String(response.text ?? "{}"));
+    } catch {
+      throw new ValidationError("NowCoder JSON response was malformed", {
+        code: "NOWCODER_FETCH_FAILED",
+        path: "response.text"
+      });
+    }
+  }
+
+  async function fetchFeedCandidatesPage({ page }) {
+    const jobId = feedJobIdFromUrl(feedUrl);
+    if (!jobId) {
+      throw new ValidationError("feedUrl must contain a numeric tagId", {
+        code: "NOWCODER_INPUT_INVALID",
+        path: "feedUrl"
+      });
+    }
+    const payload = {
+      jobId,
+      order: 3,
+      page,
+      companyList: []
+    };
+    const data = await fetchJson(FEED_LIST_API_URL, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    const records = data?.data?.records;
+    if (!Array.isArray(records)) return [];
+    return records
+      .map((record) => {
+        const contentId = record?.contentId;
+        if (typeof contentId !== "string" && typeof contentId !== "number") return null;
+        const detailId = record?.momentData?.id ?? contentId;
+        const title = normalizeWhitespace(record?.momentData?.title ?? "");
+        return {
+          url: absoluteUrl(`/discuss/${detailId}`, "https://www.nowcoder.com/"),
+          title: shortCandidateTitle(title),
+          rawTitle: title
+        };
+      })
+      .filter(Boolean);
   }
 
   /**
@@ -290,30 +444,84 @@ export function createNowCoderAdapter({
       if (typeof u === "string" && u.length > 0) skipSet.add(u);
     }
 
+    const freshTarget = freshCandidateTarget({ maxArticles, classifyTitles });
+
     const isFeedMode = query === "";
     const storedQuery = isFeedMode ? FEED_QUERY_SENTINEL : query;
     const entryUrl = entryUrlFor(query);
-    const entryPage = await fetchHtml(entryUrl);
-    const allCandidates = discoverArticleCandidates(entryPage.html, entryUrl);
-    const skipped = allCandidates
-      .filter((c) => skipSet.has(c.url))
-      .map((c) => c.url);
-    const fresh = allCandidates
-      .slice(offset)
-      .filter((c) => !skipSet.has(c.url))
-      .slice(0, maxArticles);
+    const allCandidates = [];
+    const seenCandidateUrls = new Set();
+    let page = 1;
+    let exhausted = false;
+    let consecutiveEmptyPages = 0;
 
-    let interviewFlags = fresh.map(() => true); // default: keep all
+    while (!exhausted && page <= MAX_LIST_PAGES) {
+      const pageUrl = buildPagedUrl(entryUrl, page);
+      let pageCandidates;
+      if (isFeedMode) {
+        pageCandidates = await fetchFeedCandidatesPage({ page });
+      } else {
+        const entryPage = await fetchHtml(pageUrl);
+        pageCandidates = mergeCandidates(
+          discoverArticleCandidates(entryPage.html, pageUrl),
+          discoverArticleCandidatesFromEmbeddedState(entryPage.html, pageUrl)
+        );
+      }
+      let newCount = 0;
+      for (const candidate of pageCandidates) {
+        if (seenCandidateUrls.has(candidate.url)) continue;
+        seenCandidateUrls.add(candidate.url);
+        allCandidates.push(candidate);
+        newCount += 1;
+      }
+
+      const availableAfterOffset = allCandidates.slice(offset);
+      let traversedCount = 0;
+      let freshEnough = 0;
+      for (const candidate of availableAfterOffset) {
+        traversedCount += 1;
+        if (!skipSet.has(candidate.url)) {
+          freshEnough += 1;
+          if (freshEnough >= freshTarget) break;
+        }
+      }
+      if (freshEnough >= freshTarget) break;
+
+      if (pageCandidates.length === 0 || newCount === 0) {
+        consecutiveEmptyPages += 1;
+        if (consecutiveEmptyPages >= MAX_EMPTY_LIST_PAGES) {
+          exhausted = true;
+          break;
+        }
+        page += 1;
+        continue;
+      }
+      consecutiveEmptyPages = 0;
+      page += 1;
+    }
+
+    const sliced = allCandidates.slice(offset);
+    const skipped = sliced.filter((c) => skipSet.has(c.url)).map((c) => c.url);
+    const freshPool = [];
+    let consumedCount = 0;
+    for (const candidate of sliced) {
+      consumedCount += 1;
+      if (skipSet.has(candidate.url)) continue;
+      freshPool.push(candidate);
+      if (freshPool.length >= freshTarget) break;
+    }
+
+    let interviewFlags = freshPool.map(() => true);
     let classifiedNo = [];
-    let classifiedYes = fresh.map((c) => c.url);
+    let classifiedYes = freshPool.map((c) => c.url);
     let classifyError = null;
 
-    if (classifyTitles && fresh.length > 0) {
+    if (classifyTitles && freshPool.length > 0) {
       try {
-        const titles = fresh.map((c) => c.title || "");
+        const titles = freshPool.map((c) => c.title || "");
         const result = await classifyTitles(titles);
         if (Array.isArray(result)) {
-          interviewFlags = fresh.map((_, i) => result[i] !== false);
+          interviewFlags = freshPool.map((_, i) => result[i] !== false);
         } else {
           classifyError = new Error("classifyTitles returned a malformed result");
         }
@@ -323,19 +531,25 @@ export function createNowCoderAdapter({
       if (classifyError) {
         // Classification is a noise-reduction hint, not a production gate.
         // If it fails, keep every fresh candidate and let extraction decide.
-        interviewFlags = fresh.map(() => true);
+        interviewFlags = freshPool.map(() => true);
       }
-      classifiedYes = fresh
+      classifiedYes = freshPool
         .filter((_, i) => interviewFlags[i])
         .map((c) => c.url);
-      classifiedNo = fresh
+      classifiedNo = freshPool
         .filter((_, i) => !interviewFlags[i])
         .map((c) => c.url);
     }
 
+    const fresh = [];
+    for (let i = 0; i < freshPool.length; i += 1) {
+      if (!interviewFlags[i]) continue;
+      fresh.push(freshPool[i]);
+      if (fresh.length >= maxArticles) break;
+    }
+
     const records = [];
     for (let i = 0; i < fresh.length; i += 1) {
-      if (!interviewFlags[i]) continue;
       if (records.length > 0 && delayMs > 0) await sleep(delayMs);
       const cand = fresh[i];
       try {
@@ -370,7 +584,7 @@ export function createNowCoderAdapter({
       searchUrl: entryUrl, // kept for back-compat with callers/tests
       mode: isFeedMode ? "feed" : "search",
       offset,
-      nextOffset: offset + fresh.length,
+      nextOffset: offset + consumedCount,
       totalCandidates: allCandidates.length,
       links: fresh.map((c) => c.url),
       candidates: fresh,
@@ -389,8 +603,13 @@ export function createNowCoderAdapter({
     // Exposed for unit tests.
     _internals: {
       buildSearchUrl,
+      buildPagedUrl,
+      feedJobIdFromUrl,
       entryUrlFor,
+      fetchFeedCandidatesPage,
       discoverArticleCandidates,
+      discoverArticleCandidatesFromEmbeddedState,
+      mergeCandidates,
       toArticleRecord,
       stripHtml,
       extractTitle,
