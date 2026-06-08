@@ -261,6 +261,88 @@ p {
   margin-bottom: 10px;
 }
 
+.backup-box {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.backup-box h4 {
+  margin-bottom: 0;
+}
+
+.backup-export,
+.backup-import {
+  display: grid;
+  gap: 10px;
+}
+
+.backup-box input,
+.backup-box select {
+  margin-top: 6px;
+}
+
+.backup-box input[type="file"] {
+  height: auto;
+  padding: 8px;
+  background: var(--muted-surface);
+}
+
+.import-preview {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--muted-surface);
+}
+
+.import-preview p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.import-decisions {
+  display: grid;
+  gap: 8px;
+}
+
+.import-decision {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.import-decision legend {
+  padding: 0 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.import-decision label {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.import-decision input {
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+
 .source-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;

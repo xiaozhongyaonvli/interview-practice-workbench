@@ -94,6 +94,31 @@
                 </div>
               </form>
             </div>
+
+            <div class="backup-box" data-backup-panel>
+              <h4>数据备份</h4>
+              <form class="backup-export" data-export-form>
+                <label>导出范围
+                  <select name="scope" data-export-scope>
+                    <option value="all">全部</option>
+                    <option value="questions">题目库</option>
+                    <option value="cards">卡片库</option>
+                  </select>
+                </label>
+                <button class="primary full" type="submit">导出 JSON</button>
+              </form>
+
+              <div class="backup-import" data-import-panel>
+                <label>导入备份
+                  <input type="file" accept="application/json,.json" data-import-file>
+                </label>
+                <button class="ghost full" type="button" data-import-preview>预览导入</button>
+                <div class="import-preview" data-import-summary hidden></div>
+                <div class="import-decisions" data-import-decisions hidden></div>
+                <button class="primary full" type="button" data-import-apply disabled>确认导入</button>
+              </div>
+              <p class="source-status" data-backup-status hidden></p>
+            </div>
           </aside>
 
           <section class="home-main">

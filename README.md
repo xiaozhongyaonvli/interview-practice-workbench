@@ -21,6 +21,7 @@ All runtime data is stored on local disk with JSON / JSONL files. There is no da
 - Score attempts with pasted JSON or a live LLM call
 - Compare retries and keep the best attempt
 - Save strong attempts as long-lived review cards
+- Export and import the question pool and card library as a local JSON backup
 - Persist question pool, attempts, scores, cards, and fetch cursors locally
 
 ## Current Fetch And Persistence Behavior
@@ -31,6 +32,7 @@ All runtime data is stored on local disk with JSON / JSONL files. There is no da
 - Ignored questions are hidden by default and can be purged in bulk
 - Saving a question as a card removes it from the active practice pool
 - The frontend restores the last active partition, view, and practice question with `localStorage` and `location.hash`
+- Import/export supports all data, question-only, or card-only backup files, with append/replace choices on restore
 
 ## Getting Started
 
@@ -142,6 +144,9 @@ npm run test:e2e
 ## API Overview
 
 - `GET /health`
+- `GET /api/export`
+- `POST /api/import/preview`
+- `POST /api/import/apply`
 - `POST /api/articles/manual`
 - `GET /api/articles`
 - `POST /api/questions/import`
@@ -162,5 +167,5 @@ npm run test:e2e
 - No database / ORM
 - No authentication system
 - Attempts and scores are append-only
-- Cards are only written through `POST /api/cards/from-attempt`
+- Training-created cards are written through `POST /api/cards/from-attempt`; backup restore uses `POST /api/import/apply`
 - Invalid LLM output is preserved in `data/llm/` for debugging instead of being silently dropped

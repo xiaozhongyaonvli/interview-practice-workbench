@@ -103,7 +103,7 @@ When `LLM_API_KEY` is missing, manual workflows still work and LLM routes return
 - `data/` content is local state and should not be casually edited or committed.
 - Tests that touch storage should pass a temporary `baseDir`; see `tests/helpers/withServer.js`.
 - Attempts and scores are append-only by design.
-- Cards should be created through `POST /api/cards/from-attempt`.
+- Training-created cards should be created through `POST /api/cards/from-attempt`; backup restore writes cards through `POST /api/import/apply`.
 - Invalid LLM output is preserved in `data/llm/` for debugging.
 
 ## API Surface
@@ -111,6 +111,9 @@ When `LLM_API_KEY` is missing, manual workflows still work and LLM routes return
 Core routes:
 
 - `GET /health`
+- `GET /api/export`
+- `POST /api/import/preview`
+- `POST /api/import/apply`
 - `POST /api/articles/manual`
 - `GET /api/articles`
 - `POST /api/questions/import`
@@ -160,4 +163,4 @@ Core routes:
 - Cross-day fetches restart from offset 0 while URL dedup prevents duplicate saved articles.
 - Ignored questions are hidden by default and can be purged in bulk.
 - Saving a question as a card removes it from the active practice pool.
-
+- Import/export supports full, question-only, and card-only JSON backups.

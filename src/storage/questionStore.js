@@ -54,6 +54,40 @@ export function createQuestionStore({ baseDir }) {
       return record;
     },
 
+    async replaceAll(records) {
+      if (!Array.isArray(records)) {
+        throw new StorageError("replaceAll records must be an array", {
+          code: "STORE_CONFIG_INVALID"
+        });
+      }
+      for (const record of records) validateQuestionRecord(record);
+      await writeAll(records);
+      return records;
+    },
+
+    async merge(records, { preferIncoming = true } = {}) {
+      if (!Array.isArray(records)) {
+        throw new StorageError("merge records must be an array", {
+          code: "STORE_CONFIG_INVALID"
+        });
+      }
+      for (const record of records) validateQuestionRecord(record);
+      const list = await readAll();
+      const byId = new Map(list.map((record, index) => [record.id, index]));
+      const merged = [...list];
+      for (const record of records) {
+        const index = byId.get(record.id);
+        if (index === undefined) {
+          byId.set(record.id, merged.length);
+          merged.push(record);
+        } else if (preferIncoming) {
+          merged[index] = record;
+        }
+      }
+      await writeAll(merged);
+      return merged;
+    },
+
     async update(id, patch) {
       const list = await readAll();
       const index = list.findIndex((q) => q.id === id);

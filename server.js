@@ -23,6 +23,7 @@ import { createScoringApi } from "./src/api/scoring.js";
 import { createCardsApi } from "./src/api/cards.js";
 import { createSourcesApi } from "./src/api/sources.js";
 import { createSettingsApi } from "./src/api/settings.js";
+import { createImportExportApi } from "./src/api/importExport.js";
 import { sendJson } from "./src/api/http.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
@@ -206,6 +207,7 @@ export function createAppServer({
       llmHolder.current = config?.apiKey ? buildLlmServiceFromConfig(config) : null;
     }
   });
+  const importExportApi = createImportExportApi({ questionStore, cardStore });
 
   // Hydrate from data/settings.json on startup so a UI-saved config wins
   // over env vars. Failure is non-fatal — fall back to env-built service.
@@ -251,6 +253,23 @@ export function createAppServer({
 
     if (url.pathname === "/api/settings/llm/models" && req.method === "POST") {
       await settingsApi.handleFetchModels(req, res);
+      return;
+    }
+
+    // --- Import / export routes ------------------------------------------
+
+    if (url.pathname === "/api/export" && req.method === "GET") {
+      await importExportApi.handleExport(req, res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/import/preview" && req.method === "POST") {
+      await importExportApi.handlePreview(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/import/apply" && req.method === "POST") {
+      await importExportApi.handleApply(req, res);
       return;
     }
 

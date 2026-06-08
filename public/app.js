@@ -27,6 +27,8 @@ let lastKnownQuery = "__feed__";
 let lastQuestionsResponse = { questions: [], meta: null };
 let lastAttemptsByQuestion = new Map(); // questionId -> attempts[]
 let lastCardsResponse = [];
+let pendingImportBundle = null;
+let pendingImportPreview = null;
 
 // ---------------------------------------------------------------------------
 // Frontend persistence (localStorage)
@@ -96,6 +98,11 @@ function setStatus(node, message, tone) {
   node.hidden = false;
   node.textContent = message;
   if (tone) node.dataset.sourceStatusTone = tone;
+}
+
+function responseErrorMessage(body, response) {
+  const where = body?.path ? ` (${body.path})` : "";
+  return `${body?.error ?? `HTTP ${response.status}`}${where}`;
 }
 
 function statusLabelZh(s) {
@@ -446,6 +453,241 @@ function showSourcePanel(name) {
 
 sourceTabs.forEach((tab) => {
   tab.addEventListener("click", () => showSourcePanel(tab.dataset.sourceTab));
+});
+
+// ---------------------------------------------------------------------------
+// Data import / export
+// ---------------------------------------------------------------------------
+
+const exportForm = document.querySelector("[data-export-form]");
+const importFileInput = document.querySelector("[data-import-file]");
+const importPreviewBtn = document.querySelector("[data-import-preview]");
+const importApplyBtn = document.querySelector("[data-import-apply]");
+const importSummary = document.querySelector("[data-import-summary]");
+const importDecisions = document.querySelector("[data-import-decisions]");
+const backupStatus = document.querySelector("[data-backup-status]");
+
+function sectionLabel(section) {
+  return section === "questions" ? "题目库" : "卡片库";
+}
+
+function importSectionLine(section, preview) {
+  const validation = preview.validation?.[section] ?? {};
+  const local = preview.local?.[section] ?? 0;
+  const incoming = preview.incoming?.[section] ?? 0;
+  const invalid = validation.invalid ?? 0;
+  const invalidText = invalid > 0 ? `，${invalid} 条无效` : "";
+  return `<p><strong>${sectionLabel(section)}</strong>：本地 ${local}，导入 ${incoming}${invalidText}</p>`;
+}
+
+function renderImportPreview(preview) {
+  if (!importSummary || !importDecisions || !importApplyBtn) return;
+  pendingImportPreview = preview;
+
+  const detectedSections = ["questions", "cards"].filter(
+    (section) => preview.detected?.[section]
+  );
+  if (detectedSections.length === 0) {
+    importSummary.hidden = false;
+    importSummary.innerHTML = "<p>没有检测到可导入的题目库或卡片库。</p>";
+    importDecisions.hidden = true;
+    importDecisions.innerHTML = "";
+    importApplyBtn.disabled = true;
+    return;
+  }
+
+  importSummary.hidden = false;
+  importSummary.innerHTML = detectedSections
+    .map((section) => importSectionLine(section, preview))
+    .join("");
+
+  const decisionBlocks = detectedSections
+    .filter((section) => preview.requiresDecision?.[section])
+    .map((section) => {
+      const label = sectionLabel(section);
+      return `<fieldset class="import-decision" data-import-decision="${section}">
+        <legend>${label} 已存在，选择导入方式</legend>
+        <label><input type="radio" name="import-mode-${section}" value="append" checked> 追加并去重</label>
+        <label><input type="radio" name="import-mode-${section}" value="replace"> 覆盖当前库</label>
+        <label><input type="radio" name="import-mode-${section}" value="skip"> 跳过${label}</label>
+      </fieldset>`;
+    });
+
+  importDecisions.hidden = decisionBlocks.length === 0;
+  importDecisions.innerHTML = decisionBlocks.join("");
+
+  const hasInvalid = detectedSections.some(
+    (section) => (preview.validation?.[section]?.invalid ?? 0) > 0
+  );
+  importApplyBtn.disabled = hasInvalid;
+  if (hasInvalid) {
+    setStatus(backupStatus, "导入文件包含无效记录，请修正后再导入。", "error");
+  } else {
+    setStatus(backupStatus, "预览完成，请确认导入方式。", "ok");
+  }
+}
+
+async function readImportFile() {
+  const file = importFileInput?.files?.[0];
+  if (!file) throw new Error("请选择一个 JSON 备份文件");
+  if (typeof file.text === "function") return await file.text();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("读取文件失败"));
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+async function previewSelectedImportFile() {
+  setStatus(backupStatus, "正在读取备份文件...", "ok");
+  if (importApplyBtn) importApplyBtn.disabled = true;
+  try {
+    const raw = await readImportFile();
+    let bundle;
+    try {
+      bundle = JSON.parse(raw);
+    } catch {
+      throw new Error("文件不是有效 JSON");
+    }
+    const response = await fetch("/api/import/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ bundle })
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(body, response));
+    }
+    pendingImportBundle = bundle;
+    renderImportPreview(body);
+  } catch (error) {
+    pendingImportBundle = null;
+    pendingImportPreview = null;
+    if (importSummary) {
+      importSummary.hidden = true;
+      importSummary.innerHTML = "";
+    }
+    if (importDecisions) {
+      importDecisions.hidden = true;
+      importDecisions.innerHTML = "";
+    }
+    setStatus(backupStatus, `导入预览失败: ${error?.message ?? error}`, "error");
+  }
+}
+
+function selectedImportModes() {
+  const preview = pendingImportPreview;
+  const mode = {};
+  for (const section of ["questions", "cards"]) {
+    if (!preview?.detected?.[section]) continue;
+    if (!preview.requiresDecision?.[section]) {
+      mode[section] = "append";
+      continue;
+    }
+    const checked = document.querySelector(`input[name="import-mode-${section}"]:checked`);
+    mode[section] = checked?.value ?? "append";
+  }
+  return mode;
+}
+
+async function applySelectedImport() {
+  if (!pendingImportBundle || !pendingImportPreview) {
+    setStatus(backupStatus, "请先预览一个备份文件。", "error");
+    return;
+  }
+  if (importApplyBtn) importApplyBtn.disabled = true;
+  setStatus(backupStatus, "正在导入...", "ok");
+  try {
+    const response = await fetch("/api/import/apply", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        bundle: pendingImportBundle,
+        mode: selectedImportModes()
+      })
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(responseErrorMessage(body, response));
+    }
+    const parts = [];
+    if (body.questions?.mode !== "not_included") {
+      parts.push(`题目库 ${body.questions.after} 条（新增 ${body.questions.added}，替换 ${body.questions.replaced}）`);
+    }
+    if (body.cards?.mode !== "not_included") {
+      parts.push(`卡片库 ${body.cards.after} 张（新增 ${body.cards.added}，替换 ${body.cards.replaced}）`);
+    }
+    setStatus(backupStatus, `导入完成：${parts.join("；") || "没有变更"}`, "ok");
+    if (importSummary) {
+      importSummary.hidden = false;
+      importSummary.innerHTML = `<p>${escapeHtml(parts.join("；") || "没有变更")}</p>`;
+    }
+    await refreshQuestionPool(lastKnownQuery);
+    if (document.querySelector('[data-view="cards"]')?.classList.contains("active-view")) {
+      await refreshCardsView();
+    }
+  } catch (error) {
+    setStatus(backupStatus, `导入失败: ${error?.message ?? error}`, "error");
+    if (importApplyBtn) importApplyBtn.disabled = false;
+  }
+}
+
+exportForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(exportForm);
+  const scope = String(formData.get("scope") ?? "all");
+  setStatus(backupStatus, "正在导出...", "ok");
+  try {
+    const response = await fetch(`/api/export?scope=${encodeURIComponent(scope)}`);
+    const bodyText = await response.text();
+    if (!response.ok) {
+      let body = null;
+      try { body = JSON.parse(bodyText); } catch {}
+      throw new Error(responseErrorMessage(body, response));
+    }
+
+    const filename =
+      /filename="([^"]+)"/.exec(response.headers?.get?.("content-disposition") ?? "")?.[1] ??
+      "interview-workbench-backup.json";
+    if (window.URL?.createObjectURL) {
+      const blob = new Blob([bodyText], { type: "application/json" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL?.(url);
+    }
+    setStatus(backupStatus, `已导出 ${filename}`, "ok");
+  } catch (error) {
+    setStatus(backupStatus, `导出失败: ${error?.message ?? error}`, "error");
+  }
+});
+
+importFileInput?.addEventListener("change", () => {
+  pendingImportBundle = null;
+  pendingImportPreview = null;
+  if (importSummary) {
+    importSummary.hidden = true;
+    importSummary.innerHTML = "";
+  }
+  if (importDecisions) {
+    importDecisions.hidden = true;
+    importDecisions.innerHTML = "";
+  }
+  if (importApplyBtn) importApplyBtn.disabled = true;
+  setStatus(backupStatus, "", null);
+});
+
+importPreviewBtn?.addEventListener("click", () => {
+  previewSelectedImportFile().catch(() => {});
+});
+
+importApplyBtn?.addEventListener("click", () => {
+  applySelectedImport().catch(() => {});
 });
 
 // ---------------------------------------------------------------------------
